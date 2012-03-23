@@ -1,0 +1,25 @@
+Cabal-Version: >= 1.2
+Name: xml-types-pickle
+Version: 0.1
+Synopsis: XML picklers based on xml-types, ported from hexpat-pickle
+Description:
+  A library of combinators that allows Haskell data structures to be pickled
+  (serialized) to/from XML via the Tree datatype defined in the xml-types package.
+Category: XML
+License: MIT
+License-File: LICENSE
+Author: Philipp Balzarek
+Maintainer: Philipp Balzarek
+Extra-Source-Files:
+Build-Type: Simple
+Stability: experimental
+
+Library
+  hs-source-dirs: src
+  Build-Depends:
+      base >= 3 && < 5
+    , xml-types >= 0.3
+    , text >= 0.11
+    , containers >= 0.4
+  Exposed-Modules: Data.XML.Pickle
+
