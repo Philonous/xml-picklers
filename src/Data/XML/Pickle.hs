@@ -100,6 +100,7 @@ module Data.XML.Pickle (
   , xpElemAttrs
   , xpElemNodes
   , xpElemBlank
+  , xpElemExists
    -- * Character Content
   , xpContent
    -- * choice
@@ -123,12 +124,14 @@ module Data.XML.Pickle (
   , xp4Tuple
   , xp5Tuple
   , xp6Tuple
+  , xpIsolate
   -- * Wrappers
   , xpWrap
   , xpOption
   , xpWrapMaybe
   , xpWrapMaybe_
   , xpWrapEither
+-- * Cleannes
   , xpClean
   , xpRecursiveClean
   -- * Exceptions
@@ -369,6 +372,15 @@ xpElemBlank :: Name -> PU [Node] ()
 xpElemBlank name = xpWrap (const () ) (const ((),())) $
                                 xpElem name xpUnit xpUnit
 
+-- | When pickling, creates an empty element iff parameter is True
+--
+-- When unpickling, checks whether element exists
+xpElemExists :: Name -> PU [Node] Bool
+xpElemExists name = xpWrap (\x -> case x of Nothing -> False; Just _ -> True)
+                           (\x -> if x then Just () else Nothing) $
+                           xpOption (xpElemBlank name)
+
+
 -- | Get the Content from a node
 xpContent :: PU Text a -> PU [Node] a
 xpContent xp = PU
@@ -435,6 +447,8 @@ xpWithDefault a pa = xpTryCatch pa (lift a)
       , pickleTree = error "xpWithDefault impossible" -- xpTryCatch never runs the second pickler
       }
 
+-- | Try to extract the reaming elements, fail if there are none
+getRest :: (a, (Maybe r, c)) -> Either String (a, (r, c))
 getRest (_, (Nothing, _)) = Left $ "Not enough elements"
 getRest (l, (Just r , c)) = Right (l,(r, c))
 
@@ -451,6 +465,7 @@ xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = mapLeft ("In xp2Tuple: " ++) $ do
+    -- The /Either String/ monad
     (x1 ,(r1,c1)) <- getRest =<< unpickleTree xp1 r0
     (x2 ,(r ,c2)) <-             unpickleTree xp2 r1
     return ((x1,x2),(r,c1 && c2))
@@ -546,6 +561,21 @@ xpPeek xp = PU { pickleTree = pickleTree xp
                     Left e -> Left e
                     Right (r,(_,c)) -> Right (r,(Just xs,c))
                }
+
+-- | Noop when pickling
+--
+-- When unpickling, only give access to the first element
+xpIsolate :: PU [t] a -> PU [t] a
+xpIsolate xp = PU { pickleTree = pickleTree xp
+               , unpickleTree = \xs -> case xs of
+                 [] -> Left $ "xpIsolate: no elements left"
+                 (x:xs) -> case unpickleTree xp [x] of
+                   Left l -> Left l
+                   Right (v,(r,c)) -> Right (v,(handleRest r xs, c))
+               } where
+  handleRest r xs = case mbToList r ++ xs of [] -> Nothing; rs -> Just rs
+  mbToList Nothing = []
+  mbToList (Just r) = r
 
 -- | apply a bijection before pickling / after unpickling
 xpWrap :: (a -> b) -> (b -> a) -> PU t a -> PU t b
