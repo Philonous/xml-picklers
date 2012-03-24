@@ -13,6 +13,11 @@ Maintainer: Philipp Balzarek
 Extra-Source-Files:
 Build-Type: Simple
 Stability: experimental
+Cabal-version: >= 1.6
+
+Source-Repository head
+  type: git
+  location: https://github.com/Philonous/xml-types-pickle
 
 Library
   hs-source-dirs: src
