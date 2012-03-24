@@ -109,8 +109,8 @@ module Data.XML.Pickle (
   , xpContent
    -- * Pickler combinators
    -- ** choice
-  , xpDefault
   , xpOption
+  , xpDefault
   , xpWithDefault
   , xpMap
   , xpAlt
@@ -137,9 +137,9 @@ module Data.XML.Pickle (
   , xpAll
   , xpList0
   , xpSeqWhile
+  , xpList
   -- *** Tuples
   -- | Tuple combinators apply their picklers from left to right
-  , xpList
   , xp2Tuple
   , xpPair
   , xp3Tuple
@@ -179,6 +179,8 @@ import Control.Applicative ((<$>))
 import Control.Arrow
 
 import Data.Either
+import Data.Monoid(Monoid, mempty)
+
 import Control.Exception
 import qualified Data.Map as M
 import Data.Maybe
@@ -298,7 +300,7 @@ xpAttrFixed name val =
 xpAddFixedAttr :: Name -> Text -> PU [Attribute] b -> PU [Attribute] b
 xpAddFixedAttr name val pa
     = xpWrap snd ((,) ()) $
-      xpPair (xpAttrFixed name val) pa
+      xp2Tuple (xpAttrFixed name val) pa
 
 
 -- merge successive NodeCotents
@@ -473,10 +475,14 @@ xpWithDefault a pa = xpTryCatch pa (lift a)
       , pickleTree = error "xpWithDefault impossible" -- xpTryCatch never runs the second pickler
       }
 
+-- TODO:
+-- We could use Monoid m => m instead of [a], but that is for another day...
+
 -- | Try to extract the reaming elements, fail if there are none
-getRest :: (a, (Maybe r, c)) -> Either String (a, (r, c))
-getRest (_, (Nothing, _)) = Left $ "Not enough elements"
-getRest (l, (Just r , c)) = Right (l,(r, c))
+getRest :: (a, (Maybe [r], c)) -> (a, ([r], c))
+-- getRest (_, (Nothing, _)) = Left $ "Not enough elements"
+getRest (l, (Just r, c)) = (l,(r, c))
+getRest (l, (Nothing, c)) =(l,([], c))
 
 
 -- | Doesn't create or consume anything, always succeeds
@@ -492,7 +498,7 @@ xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
                     } where
   doUnpickleTree r0 = mapLeft ("In xp2Tuple: " ++) $ do
     -- The /Either String/ monad
-    (x1 ,(r1,c1)) <- getRest =<< unpickleTree xp1 r0
+    (x1 ,(r1,c1)) <- getRest <$> unpickleTree xp1 r0
     (x2 ,(r ,c2)) <-             unpickleTree xp2 r1
     return ((x1,x2),(r,c1 && c2))
 
@@ -509,8 +515,8 @@ xp3Tuple xp1 xp2 xp3 = PU {pickleTree = \(t1, t2, t3) ->
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = mapLeft ("In xp3Tuple: " ++) $ do
-    (x1 ,(r1,c1)) <- getRest =<< unpickleTree xp1 r0
-    (x2 ,(r2,c2)) <- getRest =<< unpickleTree xp2 r1
+    (x1 ,(r1,c1)) <- getRest <$> unpickleTree xp1 r0
+    (x2 ,(r2,c2)) <- getRest <$> unpickleTree xp2 r1
     (x3 ,(r ,c3)) <-             unpickleTree xp3 r2
     return ((x1,x2,x3),(r, c1 && c2 && c3))
 
@@ -530,9 +536,9 @@ xp4Tuple xp1 xp2 xp3 xp4
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = mapLeft ("In xp4Tuple: " ++) $ do
-    (x1 ,(r1, c1)) <- getRest =<< unpickleTree xp1 r0
-    (x2 ,(r2, c2)) <- getRest =<< unpickleTree xp2 r1
-    (x3 ,(r3, c3)) <- getRest =<< unpickleTree xp3 r2
+    (x1 ,(r1, c1)) <- getRest <$> unpickleTree xp1 r0
+    (x2 ,(r2, c2)) <- getRest <$> unpickleTree xp2 r1
+    (x3 ,(r3, c3)) <- getRest <$> unpickleTree xp3 r2
     (x4 ,(r , c4)) <-             unpickleTree xp4 r3
     return ((x1,x2,x3,x4),(r, c1 && c2 && c3 && c4))
 
@@ -549,10 +555,10 @@ xp5Tuple xp1 xp2 xp3 xp4 xp5
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = mapLeft ("In xp5Tuple: " ++) $ do
-    (x1 ,(r1,c1)) <- getRest =<< unpickleTree xp1 r0
-    (x2 ,(r2,c2)) <- getRest =<< unpickleTree xp2 r1
-    (x3 ,(r3,c3)) <- getRest =<< unpickleTree xp3 r2
-    (x4 ,(r4,c4)) <- getRest =<< unpickleTree xp4 r3
+    (x1 ,(r1,c1)) <- getRest <$> unpickleTree xp1 r0
+    (x2 ,(r2,c2)) <- getRest <$> unpickleTree xp2 r1
+    (x3 ,(r3,c3)) <- getRest <$> unpickleTree xp3 r2
+    (x4 ,(r4,c4)) <- getRest <$> unpickleTree xp4 r3
     (x5 ,(r ,c5))  <-             unpickleTree xp5 r4
     return ((x1,x2,x3,x4,x5),(r, c1 && c2 && c3 && c4 && c5))
 
@@ -571,11 +577,11 @@ xp6Tuple xp1 xp2 xp3 xp4 xp5 xp6
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = mapLeft ("In xp5Tuple: " ++) $ do
-    (x1 ,(r1,c1)) <- getRest =<< unpickleTree xp1 r0
-    (x2 ,(r2,c2)) <- getRest =<< unpickleTree xp2 r1
-    (x3 ,(r3,c3)) <- getRest =<< unpickleTree xp3 r2
-    (x4 ,(r4,c4)) <- getRest =<< unpickleTree xp4 r3
-    (x5 ,(r5,c5)) <- getRest =<< unpickleTree xp5 r4
+    (x1 ,(r1,c1)) <- getRest <$> unpickleTree xp1 r0
+    (x2 ,(r2,c2)) <- getRest <$> unpickleTree xp2 r1
+    (x3 ,(r3,c3)) <- getRest <$> unpickleTree xp3 r2
+    (x4 ,(r4,c4)) <- getRest <$> unpickleTree xp4 r3
+    (x5 ,(r5,c5)) <- getRest <$> unpickleTree xp5 r4
     (x6 ,(r ,c6))  <- {- return-} unpickleTree xp6 r5
     return ((x1,x2,x3,x4,x5,x6),(r, c1 && c2 && c3 && c4 && c5 && c6))
 
@@ -656,8 +662,8 @@ xpListMinLen ml = xpWrapEither testLength id . xpList
     testLength as = Right as
 
 
--- | When unpickling, sucessively apply pickler to single elements until it fails
--- return all matched elements
+-- | When unpickling, sucessively applies pickler to single elements until it
+-- fails; returns all matched elements.
 xpSeqWhile :: PU [a] b -> PU [a] [b]
 xpSeqWhile pu = PU {
         unpickleTree = Right . doUnpickle,
