@@ -4,7 +4,8 @@
 
 -- | This module provides XML picklers that plug into the xml tree of the
 -- /xml-types/ package.
--- This module was \"inspired\" by hexpat-pickle
+-- This module was \"inspired\" by hexpat-pickle.
+--
 -- The API differences between /hexpat-pickle/ and this module include:
 --
 --  * When unpickling, picklers will /consume/ matching elmements so that they will be ignored by sucessive picklers.
@@ -14,7 +15,7 @@
 --
 --  * There are no lazy unpicklers
 --
---  * Unpicklers check whether they (and any nested picklers) consumed all input, giving rise to the 'xpClean' and 'xpRecursiveClean' combinators
+--  * Unpicklers keep track of whether they (and any nested picklers) consumed all input, giving rise to the 'xpClean' and 'xpRecursiveClean' combinators
 --
 -- The data type @'PU' t a@ represents both a pickler (converting Haskell data
 -- to XML) and an unpickler (XML to Haskell data), so your code only needs to be
@@ -22,12 +23,14 @@
 -- as 'xpElem' for XML elements, may be composed into complex arrangements using
 -- 'xpPair' and other combinators.
 --
--- The @t@ argument represents the part of the XML tree
--- that this 'PU' works on.
---
 -- The reason why you a list of nodes instead of just one when working with a single
 -- element is because the unpickler of 'xpElem' needs to see the whole list of nodes
 -- so that it can 1. skip whitespace, and 2. search to match the specified tag name.
+--
+-- Most picklers will try to find the /first match/ rather than failing when
+-- the first element doesn't match. This is why the target type often ist
+-- a list. To prevent this behaviour and commit the pickler to the first
+-- element available, use /xpIsolate/.
 --
 -- The top level of the document does not follow this rule, because it is a single
 -- node type.  'xpRoot' is needed to adapt this to type ['Node'] for your
@@ -89,11 +92,12 @@ module Data.XML.Pickle (
   , xpText0
   , xpRoot
   , xpPrim
-   -- * Attributes
+  -- * XML specific picklers
+  -- ** Attributes
   , xpAttr
   , xpAttrImplied
   , xpAttrFixed
-   -- * Elements
+   -- ** Elements
   , xpElem
   , xpElemWithName
   , xpElemVerbatim
@@ -101,21 +105,40 @@ module Data.XML.Pickle (
   , xpElemNodes
   , xpElemBlank
   , xpElemExists
-   -- * Character Content
+   -- ** Character Content
   , xpContent
-   -- * choice
+   -- * Pickler combinators
+   -- ** choice
   , xpDefault
+  , xpOption
   , xpWithDefault
-  , xpPeek
   , xpMap
   , xpAlt
   , xpEither
   , xpTryCatch
-  -- * sequencing
+  -- ** sequencing
+  -- |
+  -- /NB/ The sequencing operations /do not/ enforce any order on the
+  -- matched elements unless stated otherwise, but you can commit individial
+  -- picklers to the next available element with 'xpIsolate'.
+  -- Applying @xpIsolate@ on all nested Picklers will in effect enforce order.
+  --
+  -- Howver, once a pickler consumes an element it will not be available to
+  -- following picklers. You can circumvent this behaviour with 'xpPeek'.
+  --
+  -- If you want ensure that all elements are consumed after the last pickler is
+  -- run you may want to use 'xpClean'
+
+  -- *** Lists
+  -- |
+  -- The List pickler combinators will pickle lists in the given order
+  -- without any special treatment and unpickle as stated.
   , xpFindMatches
   , xpAll
   , xpList0
   , xpSeqWhile
+  -- *** Tuples
+  -- | Tuple combinators apply their picklers from left to right
   , xpList
   , xp2Tuple
   , xpPair
@@ -124,14 +147,26 @@ module Data.XML.Pickle (
   , xp4Tuple
   , xp5Tuple
   , xp6Tuple
-  , xpIsolate
-  -- * Wrappers
+  -- ** Wrappers
+  -- *** value wrappers
   , xpWrap
-  , xpOption
+  , xpWrapEither
   , xpWrapMaybe
   , xpWrapMaybe_
-  , xpWrapEither
--- * Cleannes
+  -- *** Book keeping
+  -- | Change the semantics of picklers
+  , xpIsolate
+  , xpPeek
+  -- *** Cleannes
+  -- |
+  -- Picklers keep track of elements left over after unpickling,
+  -- so the may be
+  --
+  -- [@clean@] an unpcikling is considered @clean@ when it doesn't leave any remainng elements
+  --
+  -- [@recursively clean@] an unpickling is considered @recursively clean@ if it and any nested picklers are clean
+  --
+
   , xpClean
   , xpRecursiveClean
   -- * Exceptions
@@ -155,16 +190,11 @@ import Data.XML.Types
 
 -- | The pickler data type
 --
---
--- [@clean@] an unpickling is considered @clean@ when it doesn't leave any remainng elements
---
--- [@recursively clean@] an unpickling is considered @recursively clean@ if it and any nested picklers are clean
---
 data PU t a = PU
   { unpickleTree :: t
                     -> Either String (a, (Maybe t, Bool))
                     -- ^ Either an error or the return value,
-                    -- any remaining input and a bool value indicating whether
+                    -- any remaining input and a Bool value indicating whether
                     -- all nested picklers where clean
   , pickleTree :: a -> t
   }
@@ -406,8 +436,6 @@ xpContent xp = PU
 --
 -- in which @Just 5@ would be encoded as @\<score value=\"5\"\/\>@ and @Nothing@ would be
 -- encoded as @\<score\/\>@.
---
--- Note on lazy unpickle: The argument is evaluated strictly.
 xpOption :: PU [t] a -> PU [t] (Maybe a)
 xpOption pu = PU {
         unpickleTree = Right . doUnpickle,
@@ -436,8 +464,6 @@ xpDefault df
 -- | Attempt to use a pickler. On failure, return a default value.
 --
 -- Unlike 'xpDefault', the default value /is/ encoded in the XML document.
---
--- Note on lazy unpickle: The child is evaluated strictly.
 xpWithDefault :: a -> PU t a -> PU t a
 xpWithDefault a pa = xpTryCatch pa (lift a)
   where
@@ -458,7 +484,7 @@ xpUnit :: PU [a] ()
 xpUnit = PU (\x -> Right ((), (Just x, True))) (const [])
 
 
--- | Combine 2 picklers, executed from left to right
+-- | Combines 2 picklers
 xp2Tuple :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
                         pickleTree xp1 t1 ++ pickleTree xp2 t2
@@ -474,7 +500,7 @@ xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
 xpPair :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xpPair = xp2Tuple
 
--- | Combine 3 picklers, executed from left to right
+-- | Combines 3 picklers
 xp3Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
 xp3Tuple xp1 xp2 xp3 = PU {pickleTree = \(t1, t2, t3) ->
                         pickleTree xp1 t1
@@ -492,7 +518,7 @@ xp3Tuple xp1 xp2 xp3 = PU {pickleTree = \(t1, t2, t3) ->
 xpTriple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
 xpTriple = xp3Tuple
 
--- | Combine 4 picklers, executed from left to right
+-- | Combines 4 picklers
 xp4Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4
              -> PU [a] (a1, a2, a3,a4)
 xp4Tuple xp1 xp2 xp3 xp4
@@ -510,7 +536,7 @@ xp4Tuple xp1 xp2 xp3 xp4
     (x4 ,(r , c4)) <-             unpickleTree xp4 r3
     return ((x1,x2,x3,x4),(r, c1 && c2 && c3 && c4))
 
--- | Combine 5 picklers, executed from left to right
+-- | Combines 5 picklers
 xp5Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] (a1, a2, a3, a4, a5)
 xp5Tuple xp1 xp2 xp3 xp4 xp5
@@ -530,7 +556,7 @@ xp5Tuple xp1 xp2 xp3 xp4 xp5
     (x5 ,(r ,c5))  <-             unpickleTree xp5 r4
     return ((x1,x2,x3,x4,x5),(r, c1 && c2 && c3 && c4 && c5))
 
--- | Combine 6 picklers, executed from left to right
+-- | You guessed it ... Combines 6 picklers
 xp6Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] a6
              -> PU [a] (a1, a2, a3, a4, a5, a6)
@@ -592,9 +618,7 @@ xpPrim = PU { unpickleTree = \x -> case reads $ Text.unpack x of
             ,  pickleTree = Text.pack . show
             }
 
-
--- | pickles to
--- When unpickling, tries to apply the pickler to all elements
+-- | When unpickling, tries to apply the pickler to all elements
 -- returning and consuming only matched elements
 xpFindMatches :: PU [b] a -> PU [b] [a]
 xpFindMatches xp = PU { unpickleTree = doUnpickleTree
@@ -607,7 +631,7 @@ xpFindMatches xp = PU { unpickleTree = doUnpickleTree
             Right (r,(_,c)) -> Right (r, c)
         in Right (fst <$> rs, (if null ls then Nothing else Just ls,all snd rs))
 
--- | tries to apply the pickler to all the remaining elements
+-- | Tries to apply the pickler to all the remaining elements;
 -- fails if any of them don't match
 xpAll :: PU [a] b -> PU [a] [b]
 xpAll xp = PU { unpickleTree = \x ->
@@ -632,8 +656,7 @@ xpListMinLen ml = xpWrapEither testLength id . xpList
     testLength as = Right as
 
 
--- | Pickles lists in order
--- When unpickling, sucessively apply pickler to single elements until it fails
+-- | When unpickling, sucessively apply pickler to single elements until it fails
 -- return all matched elements
 xpSeqWhile :: PU [a] b -> PU [a] [b]
 xpSeqWhile pu = PU {
@@ -691,6 +714,8 @@ xpWrapMaybe_ errorMsg a2b b2a pua = PU {
 
 -- | Like xpWrap, except it strips Right (and treats Left as a failure) during unpickling.
 -- xpWrapEither :: (a -> Either String b, b -> a) -> PU t a -> PU t b
+--
+-- not to be confuesd with 'xpEither'
 xpWrapEither :: (a -> Either String b) -> (b -> a) -> PU t a -> PU t b
 xpWrapEither a2b b2a pua = PU {
         unpickleTree = \t -> case unpickleTree pua t of
@@ -725,6 +750,8 @@ xpAlt selector picklers = PU {
 
 -- | Try the left pickler first and if that failes the right one.
 -- wrapping the result in Left or Right, respectively
+--
+-- Not to be confued with 'xpWrapEither'
 xpEither :: PU n t1 -> PU n t2 -> PU n (Either t1 t2)
 xpEither xpl xpr = PU {
         unpickleTree = doUnpickle,
