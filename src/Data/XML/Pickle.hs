@@ -142,6 +142,7 @@ module Data.XML.Pickle (
   -- | Tuple combinators apply their picklers from left to right
   , xp2Tuple
   , xpPair
+  , (<++>)
   , xp3Tuple
   , xpTriple
   , xp4Tuple
@@ -505,6 +506,10 @@ xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
 -- | 'xp2Tuple' (/compat/)
 xpPair :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xpPair = xp2Tuple
+
+-- | 'xp2Tuple'
+(<++>) :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
+(<++>) = xp2Tuple
 
 -- | Combines 3 picklers
 xp3Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
