@@ -10,14 +10,9 @@ License: BSD3
 License-File: LICENSE
 Author: Philipp Balzarek
 Maintainer: Philipp Balzarek
-Extra-Source-Files:
 Build-Type: Simple
 Stability: experimental
-Cabal-version: >= 1.6
-
-Source-Repository head
-  type: git
-  location: https://github.com/Philonous/xml-types-pickle
+Cabal-version: >= 1.8
 
 Library
   hs-source-dirs: src
@@ -28,3 +23,6 @@ Library
     , containers >= 0.4
   Exposed-Modules: Data.XML.Pickle
 
+Source-Repository head
+  type: git
+  location: https://github.com/Philonous/xml-types-pickle

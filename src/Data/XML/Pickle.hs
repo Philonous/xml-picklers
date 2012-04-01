@@ -39,6 +39,12 @@
 --
 -- /NB/: Unresolved entities are considered an error and will trigger an exception
 --
+-- When unpickling, the folowing invariant regarding the list of remaining elements should be observed:
+-- * The returned list should be a subset of or the initial list itself, that is, no elements should be added
+-- or changed
+-- * The relative order of elements should be preserved
+-- * Elements may, however, be removed from anywhere in the list
+--
 -- Here is a simple example to get you started:
 --
 -- > {-# LANGUAGE OverloadedStrings #-}
@@ -163,7 +169,7 @@ module Data.XML.Pickle (
   -- Picklers keep track of elements left over after unpickling,
   -- so the may be
   --
-  -- [@clean@] an unpcikling is considered @clean@ when it doesn't leave any remainng elements
+  -- [@clean@] an unpickling is considered @clean@ when it doesn't leave any remainng elements
   --
   -- [@recursively clean@] an unpickling is considered @recursively clean@ if it and any nested picklers are clean
   --
@@ -180,6 +186,7 @@ import Control.Applicative ((<$>))
 import Control.Arrow
 
 import Data.Either
+import Data.List(intersperse)
 import Data.Monoid(Monoid, mempty)
 
 import Control.Exception
@@ -191,8 +198,6 @@ import Data.Typeable
 
 import Data.XML.Types
 
--- | The pickler data type
---
 data PU t a = PU
   { unpickleTree :: t
                     -> Either String (a, (Maybe t, Bool))
@@ -321,7 +326,9 @@ flattenContent xs = case foldr (\x (buf, res) -> case x of
     addConcatText xs = (nc (Text.concat xs) :)
 
 
--- | pickle an Element
+-- | When unpickling, tries to find the first element with the supplied name.
+-- Once such an element is found, it will commit to it and /fail/ if any of the
+-- picklers don't match.
 xpElem :: Name -- ^ name of the Element
           -> PU [Attribute] a -- ^ pickler for attributes
           -> PU [Node] n  -- ^ pickler for child nodes
@@ -492,6 +499,7 @@ xpUnit = PU (\x -> Right ((), (Just x, True))) (const [])
 
 
 -- | Combines 2 picklers
+
 xp2Tuple :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xp2Tuple xp1 xp2 = PU {pickleTree = \(t1, t2) ->
                         pickleTree xp1 t1 ++ pickleTree xp2 t2
@@ -625,7 +633,7 @@ xpWrap to from xp = PU { unpickleTree = \x -> (first to) <$> unpickleTree xp x
 xpPrim :: (Show a, Read a) => PU Text a
 xpPrim = PU { unpickleTree = \x -> case reads $ Text.unpack x of
                  []       -> Left $ "In xpPrim: couldn't read " ++ show x ++ "."
-                 (r,_):_  -> Right r
+                 (r,rest):_  -> Right (r,(Nothing, True))
             ,  pickleTree = Text.pack . show
             }
 
@@ -751,12 +759,16 @@ xpAlt selector picklers = PU {
     }
   where
     doUnpickle t =
-        let tryAll [] = Left "all xpAlt unpickles failed"
+        let tryAll [] = Left []
             tryAll (x:xs) =
                 case unpickleTree x t of
-                    Right (val, rest) -> Right (val, rest)
-                    Left err  -> tryAll xs
-        in  tryAll picklers
+                    Right r -> Right r
+                    Left err  -> case tryAll xs of
+                      Left errs -> Left $ err : errs
+                      Right r -> Right r
+        in case tryAll picklers of
+          Left errs -> Left $ "In xpAlt:\n  " ++ concat (intersperse ";\n  " errs)
+          Right r -> Right r
 
 
 -- | Try the left pickler first and if that failes the right one.
