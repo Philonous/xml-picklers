@@ -106,6 +106,7 @@ module Data.XML.Pickle (
    -- ** Elements
   , xpElem
   , xpElemWithName
+  , xpElemByNamespace
   , xpElemVerbatim
   , xpElemAttrs
   , xpElemNodes
@@ -381,6 +382,36 @@ xpElemWithName attrP nodeP = PU
 
     nodeElementHelper (NodeElement (Element _ _ _)) = True
     nodeElementHelper _ = False
+
+-- | find element by name space, prefixes are ignored
+xpElemByNamespace :: Text -- ^ Namespace
+                  -> PU Text name -- ^ Pickler for the local name
+                  -> PU [Attribute] a  -- ^ pickler for attributes
+                  -> PU [Node] n    -- ^ pickler for child nodes
+                  -> PU [Node] (name,a,n)
+xpElemByNamespace ns nameP attrP nodeP = PU
+         { unpickleTree = doUnpickleTree
+         , pickleTree   = \(name, a,n) -> [NodeElement $ Element
+                                     (Name (pickleTree nameP name) (Just ns) Nothing)
+                                     (pickleTree attrP a)
+                                     (pickleTree nodeP n)
+                                    ]
+         } where
+    doUnpickleTree nodes = case getFirst (nodeElementNSHelper ns) nodes of
+      Just ((NodeElement (Element name attrs children)), rem) ->
+        case (do
+          (name' , (_, cn)) <- unpickleTree nameP (nameLocalName name)
+          (attrs', (_, ca)) <- unpickleTree attrP attrs
+          (nodes', (_, cns)) <- unpickleTree nodeP nodes
+          return ((name', attrs', nodes')
+                 ,(if null rem then Nothing else Just rem,   cn && ca && cns))
+        ) of
+          Left e -> Left $ "in xpElemByNamespace with element " ++ show name ++ " : " ++ e
+          Right r -> Right r
+      _ -> Left $ "xpElemWithName: no element found."
+
+    nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameLocalName n == ns
+    nodeElementNSHelper ns _ = False
 
 -- | use Element untouched
 xpElemVerbatim ::  PU [Node] (Element)
