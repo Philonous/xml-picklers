@@ -81,8 +81,9 @@
 -- Funktions marked with /compat/ are included for compatibility with hexpat-pickle
 
 module Data.XML.Pickle (
-  -- * Picklers
+  -- * Types
   PU(..)
+  , Attribute
   -- * Pickler Invocation
   , pickle
   , unpickle
