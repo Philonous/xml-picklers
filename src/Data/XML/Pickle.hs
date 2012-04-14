@@ -213,6 +213,16 @@ data UnresolvedEntityException = UnresolvedEntityException
                                    deriving (Typeable, Show)
 instance Exception UnresolvedEntityException
 
+ppName :: Name -> String
+ppName (Name local ns pre) = let
+  ns' = case ns of
+    Nothing -> []
+    Just ns'' -> ["{", Text.unpack ns'',"}"]
+  pre' = case  pre of
+    Nothing -> []
+    Just pre'' -> [Text.unpack pre'',":"]
+  in  concat . concat $ [["\""],ns', pre', [Text.unpack local], ["\""]]
+
 -- | pickle a Tree
 pickle :: PU t a -> a -> t
 pickle = pickleTree
@@ -229,6 +239,7 @@ mapLeft _ (Right r) = Right r
 mapLeft f (Left l ) = Left $ f l
 
 type Attribute = (Name,[Content])
+
 
 -- | Returns everything (remaining), untouched.
 xpId :: PU a a
@@ -284,12 +295,12 @@ xpAttr name pu = PU
         }
   where
     doUnpickle attrs = case getFirst ((== name) . fst) attrs of
-      Nothing -> Left $ "attribute " ++ show name ++ " not found."
+      Nothing -> Left $ "attribute " ++ ppName name ++ " not found."
       Just ((_,[ContentText x]), rem) -> case unpickleTree pu x of
-        Left e -> Left $ "in attribute " ++ show name ++ " : " ++ e
+        Left e -> Left $ "in attribute " ++ ppName name ++ " : " ++ e
         Right (y,(_,c)) -> let rem' = if null rem then Nothing else Just rem
                          in Right (y,(rem',c))
-      _ -> Left $ "xpAttr: Unresolved entities in " ++ show name ++ "."
+      _ -> Left $ "xpAttr: Unresolved entities in " ++ ppName name ++ "."
 
 -- | Pickle attribute if Just is given, on unpickling return Just <val> when
 -- the attribute is found, Nothing otherwise
@@ -300,7 +311,7 @@ xpAttrImplied name pu = xpOption $ xpAttr name pu
 -- not present on unpickle.
 xpAttrFixed :: Name -> Text -> PU [Attribute] ()
 xpAttrFixed name val =
-    xpWrapMaybe_ ("expected fixed attribute "++ show name++"="++show val)
+    xpWrapMaybe_ ("expected fixed attribute "++ ppName name++"="++show val)
                 (\v -> if v == val then Just () else Nothing) (const val) $
     xpAttr name xpId
 
@@ -345,14 +356,14 @@ xpElem name attrP nodeP = PU
     doUnpickleTree nodes = case getFirst (nodeElementNameHelper name) nodes of
       Just ((NodeElement (Element _ attrs children)), rem) ->
         case unpickleTree attrP attrs of
-          Left e -> Left $ "in element " ++ show name ++ " : " ++ e
+          Left e -> Left $ "in element " ++ ppName name ++ " : " ++ e
           Right (x,(_,ca)) -> case unpickleTree nodeP
                                     $ flattenContent children of
-            Left e -> Left $ "in element " ++ show name ++ " : " ++ e
+            Left e -> Left $ "in element " ++ ppName name ++ " : " ++ e
             Right (y,(_,cc)) ->
               let rem' = if null rem then Nothing else Just rem
               in Right ((x,y), (rem' , ca && cc))
-      _ -> Left $ "xpElem: " ++ show name ++ " not found."
+      _ -> Left $ "xpElem: " ++ ppName name ++ " not found."
 
     nodeElementNameHelper name (NodeElement (Element n _ _)) = n == name
     nodeElementNameHelper _ _ = False
@@ -372,10 +383,10 @@ xpElemWithName attrP nodeP = PU
     doUnpickleTree nodes = case getFirst nodeElementHelper nodes of
       Just ((NodeElement (Element name attrs children)), rem) ->
         case unpickleTree attrP attrs of
-          Left e -> Left $ "in element " ++ show name ++ " : " ++ e
+          Left e -> Left $ "in element " ++ ppName name ++ " : " ++ e
           Right (x,(_,ca)) -> case unpickleTree nodeP $
                                      flattenContent children of
-            Left e -> Left $ "in element " ++ show name ++ " : " ++ e
+            Left e -> Left $ "in element " ++ ppName name ++ " : " ++ e
             Right (y,(_,cc)) ->
               let rem' = if null rem then Nothing else Just rem
               in Right ((name,x,y), (rem' , ca && cc))
@@ -407,7 +418,7 @@ xpElemByNamespace ns nameP attrP nodeP = PU
           return ((name', attrs', nodes')
                  ,(if null rem then Nothing else Just rem,   cn && ca && cns))
         ) of
-          Left e -> Left $ "in xpElemByNamespace with element " ++ show name ++ " : " ++ e
+          Left e -> Left $ "in xpElemByNamespace with element " ++ ppName name ++ " : " ++ e
           Right r -> Right r
       _ -> Left $ "xpElemByNamespace: no element found."
 
