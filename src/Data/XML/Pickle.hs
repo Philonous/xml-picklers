@@ -409,7 +409,7 @@ xpElemByNamespace ns nameP attrP nodeP = PU
         ) of
           Left e -> Left $ "in xpElemByNamespace with element " ++ show name ++ " : " ++ e
           Right r -> Right r
-      _ -> Left $ "xpElemWithName: no element found."
+      _ -> Left $ "xpElemByNamespace: no element found."
 
     nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameLocalName n == ns
     nodeElementNSHelper ns _ = False
