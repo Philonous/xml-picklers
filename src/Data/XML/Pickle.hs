@@ -422,7 +422,7 @@ xpElemByNamespace ns nameP attrP nodeP = PU
           Right r -> Right r
       _ -> Left $ "xpElemByNamespace: no element found."
 
-    nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameLocalName n == ns
+    nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameNamespace n == Just ns
     nodeElementNSHelper ns _ = False
 
 -- | use Element untouched
