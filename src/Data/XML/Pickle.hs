@@ -186,6 +186,7 @@ module Data.XML.Pickle (
 
 import Control.Applicative ((<$>))
 import Control.Arrow
+import qualified Control.Category as Cat
 
 import Data.Either
 import Data.List(intersperse)
@@ -886,4 +887,13 @@ xpRecursiveClean xp = PU { unpickleTree = \x -> case unpickleTree xp x of
                      , pickleTree = pickleTree xp
                 }
 
+instance Cat.Category PU where
+    id = xpId
+    g . f = PU { pickleTree = pickleTree f . pickleTree g
+               , unpickleTree = \val -> case unpickleTree f val of
+                   Left e -> Left e
+                   Right (resf , (rem, cg)) -> case unpickleTree g resf of
+                       Left e -> Left e
+                       Right (resg, (_, cf)) -> Right (resg, (rem, cg && cf))
+               }
 
