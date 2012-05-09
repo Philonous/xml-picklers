@@ -162,6 +162,7 @@ module Data.XML.Pickle (
   , xpWrapEither
   , xpWrapMaybe
   , xpWrapMaybe_
+  , xpElems
   -- *** Book keeping
   -- | Change the semantics of picklers
   , xpIsolate
@@ -464,7 +465,6 @@ xpElemExists name = xpWrap (\x -> case x of Nothing -> False; Just _ -> True)
                            (\x -> if x then Just () else Nothing) $
                            xpOption (xpElemBlank name)
 
-
 -- | Get the Content from a node
 xpContent :: PU Text a -> PU [Node] a
 xpContent xp = PU
@@ -481,6 +481,26 @@ xpContent xp = PU
 
      nodeContentHelper (NodeContent _) = True
      nodeContentHelper _ = False
+
+-- | Unlift a pickler on Nodes to a Pickler on Elements. Generated
+-- Nodes that are not Elements will be silently discarded
+xpElems :: PU [Node] a -> PU [Element] a
+xpElems xp = PU
+             { unpickleTree = doUnpickle
+             , pickleTree = nodesToElems . pickleTree xp
+             }
+  where
+    doUnpickle nodes = case unpickleTree xp (map NodeElement nodes) of
+        Left e -> Left $ "In xpElems :" ++ e
+        Right (a,(r,c)) -> let r' = case r of
+                                      Nothing -> Nothing
+                                      Just rs' -> case nodesToElems rs' of
+                                          [] -> Nothing
+                                          rs -> Just rs
+                                  in Right (a,(r', c))
+    nodesToElems = foldr (\n es -> case n of
+                                      NodeElement e -> e : es
+                                      _ -> es) []
 
 -- | Convert XML text \<-\> a Maybe type. During unpickling, Nothing is returned
 -- if there's a failure during the unpickling of the first argument.  A typical
