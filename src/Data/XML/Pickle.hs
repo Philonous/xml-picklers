@@ -97,6 +97,7 @@ module Data.XML.Pickle (
   , xpHead
   , xpTree
   , xpText0
+  , xpText
   , xpRoot
   , xpPrim
   -- * XML specific picklers
@@ -162,6 +163,7 @@ module Data.XML.Pickle (
   , xpWrapEither
   , xpWrapMaybe
   , xpWrapMaybe_
+  , xpAssert
   , xpElems
   -- *** Book keeping
   -- | Change the semantics of picklers
@@ -267,6 +269,24 @@ xpTree = xpHead
 xpText0 :: PU Text Text
 xpText0 = xpId
 
+
+-- | Test predicate when unpickling. Fails with given error message when the
+-- predicate return false.
+--
+-- N.B.: The predicate will only be tested while /unpickling/. When pickling,
+-- this is a noop.
+xpAssert :: String -> (a -> Bool) -> PU t a -> PU t a
+xpAssert error p xp = PU { unpickleTree = \t -> case unpickleTree xp t of
+                                   Left e -> Left e
+                                   Right (r,c) -> case p r of
+                                       True -> Right (r,c)
+                                       False -> Left error
+                         , pickleTree = pickleTree xp
+                         }
+
+-- | Like 'xpText0', but fails on non-empty input.
+xpText :: PU Text Text
+xpText = xpAssert "xpText: Text value is null" Text.null xpText0
 
 -- | Adapts a list of nodes to a single node. Generally used at the top level of
 -- an XML document.
@@ -916,4 +936,3 @@ instance Cat.Category PU where
                        Left e -> Left e
                        Right (resg, (_, cf)) -> Right (resg, (rem, cg && cf))
                }
-
