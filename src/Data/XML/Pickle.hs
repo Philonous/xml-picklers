@@ -30,7 +30,7 @@
 -- Most picklers will try to find the /first match/ rather than failing when
 -- the first element doesn't match. This is why the target type often ist
 -- a list. To prevent this behaviour and commit the pickler to the first
--- element available, use /xpIsolate/.
+-- element available, use 'xpIsolate'.
 --
 -- The top level of the document does not follow this rule, because it is a single
 -- node type.  'xpRoot' is needed to adapt this to type ['Node'] for your

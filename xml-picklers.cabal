@@ -1,5 +1,5 @@
 Cabal-Version: >= 1.2
-Name: xml-types-pickle
+Name: xml-picklers
 Version: 0.1
 Synopsis: XML picklers based on xml-types, ported from hexpat-pickle
 Description:
@@ -25,4 +25,4 @@ Library
 
 Source-Repository head
   type: git
-  location: https://github.com/Philonous/xml-types-pickle
+  location: https://github.com/Philonous/xml-picklers
