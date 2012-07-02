@@ -114,6 +114,7 @@ module Data.XML.Pickle (
   , xpElemNodes
   , xpElemBlank
   , xpElemExists
+  , xpElems
    -- ** Character Content
   , xpContent
    -- * Pickler combinators
@@ -144,6 +145,7 @@ module Data.XML.Pickle (
   -- without any special treatment and unpickle as stated.
   , xpFindMatches
   , xpAll
+  , xpSubsetAll
   , xpList0
   , xpSeqWhile
   , xpList
@@ -164,7 +166,7 @@ module Data.XML.Pickle (
   , xpWrapMaybe
   , xpWrapMaybe_
   , xpAssert
-  , xpElems
+  , xpUnliftElems
   -- *** Book keeping
   -- | Change the semantics of picklers
   , xpIsolate
@@ -192,7 +194,7 @@ import Control.Arrow
 import qualified Control.Category as Cat
 
 import Data.Either
-import Data.List(intersperse)
+import Data.List(intersperse, partition)
 import Data.Monoid(Monoid, mempty)
 
 import Control.Exception
@@ -390,6 +392,46 @@ xpElem name attrP nodeP = PU
     nodeElementNameHelper name (NodeElement (Element n _ _)) = n == name
     nodeElementNameHelper _ _ = False
 
+-- | Handle all elements with a given name. The unpickler will fail when any of
+-- the elements fails to unpickle.
+xpElems :: Name -- ^ Name of the elements
+        -> PU [Attribute] a -- ^ pickler for attributes
+        -> PU [Node] n -- ^ pickler for child nodes
+        -> PU [Node] [(a, n)]
+xpElems name attrs children = PU { unpickleTree = \t ->
+                     let (targets, rest) = partition isThisElem t
+                         rest' = if null rest then Nothing else Just rest
+                     in
+                     case unpickleTree (xpAll $ xpElem name attrs children) targets of
+                         Left e -> Left $ "In xpElems: " ++ e
+                         Right (r, (_, c)) -> Right (r,(rest', c && not (null rest)))
+                     , pickleTree = pickleTree (xpAll $ xpElem name attrs children)
+
+             }
+  where
+    isThisElem (NodeElement (Element name _ _)) = True
+    isThisElem _ = False
+
+
+-- | For unpickling, apply the given pickler to a subset of the elements
+-- determined by a given predicate
+--
+-- Pickles like 'xpAll'
+xpSubsetAll :: (a -> Bool)
+            -> PU [a] b
+            -> PU [a] [b]
+xpSubsetAll pred xp = PU { unpickleTree = \t ->
+                     let (targets, rest) = partition pred t
+                         rest' = if null rest then Nothing else Just rest
+                     in
+                     case unpickleTree (xpAll xp) targets of
+                         Left e -> Left $ "In xpSubset:" ++ e
+                         Right (r, (_, c)) ->
+                             Right (r,(rest', c && not (null rest)))
+                     , pickleTree = pickleTree (xpAll $ xp)
+
+             }
+
 -- | pickle Element without restriction on the name.
 -- the name as taken / returned as the first element of the triple
 xpElemWithName :: PU [Attribute] a  -- ^ pickler for attributes
@@ -502,10 +544,10 @@ xpContent xp = PU
      nodeContentHelper (NodeContent _) = True
      nodeContentHelper _ = False
 
--- | Unlift a pickler on Nodes to a Pickler on Elements. Generated
--- Nodes that are not Elements will be silently discarded
-xpElems :: PU [Node] a -> PU [Element] a
-xpElems xp = PU
+-- | Unlift a pickler on Nodes to a Pickler on Elements. Nodes generated during
+-- pickling that are not Elements will be silently discarded
+xpUnliftElems :: PU [Node] a -> PU [Element] a
+xpUnliftElems xp = PU
              { unpickleTree = doUnpickle
              , pickleTree = nodesToElems . pickleTree xp
              }
