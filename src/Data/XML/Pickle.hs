@@ -194,7 +194,7 @@ import Control.Arrow
 import qualified Control.Category as Cat
 
 import Data.Either
-import Data.List(intersperse, partition, intercalate)
+import Data.List(partition)
 import Data.Monoid(Monoid, mempty)
 
 import Control.Exception
