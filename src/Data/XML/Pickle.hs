@@ -259,13 +259,13 @@ infixr 0 <?>
 (<?>) tr = mapError (swapStack tr)
   where
     swapStack ns (TraceStep s e) = TraceStep ns e
-    swapStack ns e = error $ "Can't replace non-trace step" ++ show e
+    swapStack ns e = error $ "Can't replace non-trace step: " ++ show e
 
 
 (<??>) tr = mapError (swapStack tr)
   where
     swapStack ns (TraceStep (_,s) e) = TraceStep (ns,s) e
-    swapStack ns e = error $ "Can't replace non-trace step" ++ show e
+    swapStack ns e = error $ "Can't replace non-trace step: " ++ show e
 
 
 
@@ -467,7 +467,7 @@ xpElems :: Name -- ^ Name of the elements
 xpElems name attrs children = tr <?> xpSubsetAll isThisElem
                                        (xpElem name attrs children)
   where
-    isThisElem (NodeElement (Element name _ _)) = True
+    isThisElem (NodeElement (Element name' _ _)) = name' == name
     isThisElem _ = False
 
     tr = ("xpElems", Text.pack $ ppName name)
@@ -479,12 +479,12 @@ xpElems name attrs children = tr <?> xpSubsetAll isThisElem
 xpSubsetAll :: (a -> Bool) -- ^ predicate to select the subset
             -> PU [a] b    -- ^ pickler to apply on the subset
             -> PU [a] [b]
-xpSubsetAll pred xp = PU { unpickleTree = \t ->
+xpSubsetAll pred xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
                      let (targets, rest) = partition pred t
                          rest' = if null rest then Nothing else Just rest
                      in
                      case unpickleTree (xpAll xp) targets of
-                         Left e -> Left $ ("xpSubsetAll","") <++> e
+                         Left e -> Left e
                          Right (r, (_, c)) ->
                              Right (r,(rest', c && not (null rest)))
                      , pickleTree = pickleTree (xpAll $ xp)
@@ -688,21 +688,20 @@ xpUnit :: PU [a] ()
 xpUnit = PU (\x -> Right ((), (Just x, True))) (const [])
 
 
--- | Combines 2 picklers
+tErr tr = mapLeft (("tuple", tr) <++>)
 
+-- | Combines 2 picklers
 xp2Tuple :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
-xp2Tuple xp1 xp2 = ("xp2Tuple","") <?+>
+xp2Tuple xp1 xp2 = "xp2Tuple" <??>
                    PU {pickleTree = \(t1, t2) ->
                         pickleTree xp1 t1 ++ pickleTree xp2 t2
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = do
     -- The /Either String/ monad
-    (x1 ,(r1,c1)) <- getRest <$> unpickleTree xp1 r0
-    (x2 ,(r ,c2)) <-             unpickleTree xp2 r1
+    (x1 ,(r1,c1)) <- tErr "1" $ getRest <$> unpickleTree xp1 r0
+    (x2 ,(r ,c2)) <- tErr "2" $             unpickleTree xp2 r1
     return ((x1,x2),(r,c1 && c2))
-
-tErr tr = mapLeft (("tuple", tr) <++>)
 
 -- | 'xp2Tuple' (/compat/)
 xpPair :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
@@ -861,7 +860,7 @@ xpAll xp = PU { unpickleTree = doUnpickleTree
             Left e -> Left e
             Right (r,(_,c)) -> Right (r, c)
         in case ls of
-          [] -> Right (fst <$> rs , (Nothing, True))
+          [] -> Right (fst <$> rs , (Nothing, and $ snd <$> rs))
           (_:_) -> Left $ Variants ls
 
 -- | 'xpAll' (/compat/)
