@@ -98,6 +98,7 @@ module Data.XML.Pickle (
   , xpTree
   , xpText0
   , xpText
+  , xpString
   , xpRoot
   , xpPrim
   -- * XML specific picklers
@@ -146,6 +147,7 @@ module Data.XML.Pickle (
   , xpFindMatches
   , xpAll
   , xpSubsetAll
+  , xpAllByNamespace
   , xpList0
   , xpSeqWhile
   , xpList
@@ -330,6 +332,10 @@ xpTree = xpHead
 xpText0 :: PU Text Text
 xpText0 = xpId
 
+-- | Convert text to/from String
+xpString :: PU Text String
+xpString = ("xpString", "") <?> xpWrap Text.unpack Text.pack xpId
+
 -- | Test predicate when unpickling. Fails with given error message when the
 -- predicate return false.
 --
@@ -488,8 +494,21 @@ xpSubsetAll pred xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
                          Right (r, (_, c)) ->
                              Right (r,(rest', c && not (null rest)))
                      , pickleTree = pickleTree (xpAll $ xp)
-
              }
+
+
+-- | Apply unpickler to all elements with the given ns.
+--
+-- Pickles like 'xpAll'.
+xpAllByNamespace :: Text -> PU [Node] b -> PU [Node] [b]
+xpAllByNamespace namespace xp = ("xpAllByNamespace",namespace)
+                                  <?> xpSubsetAll helper xp
+
+  where
+    helper (NodeElement (Element (Name _local (Just ns) _pre) _ _ ))
+            = ns == namespace
+    helper _ = False
+
 
 -- | pickle Element without restriction on the name.
 -- the name as taken / returned as the first element of the triple
