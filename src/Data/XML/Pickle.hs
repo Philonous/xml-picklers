@@ -113,6 +113,7 @@ module Data.XML.Pickle (
   , xpElemVerbatim
   , xpElemAttrs
   , xpElemNodes
+  , xpElemText
   , xpElemBlank
   , xpElemExists
   , xpElems
@@ -572,7 +573,9 @@ xpElemByNamespace ns nameP attrP nodeP = PU
     nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameNamespace n == Just ns
     nodeElementNSHelper ns _ = False
 
--- | use Element untouched
+-- | Pickler Returns the first found Element untouched
+--
+-- Unpickler wraps element in 'NodeElement'
 xpElemVerbatim ::  PU [Node] (Element)
 xpElemVerbatim = PU
          { unpickleTree = doUnpickleTree
@@ -596,6 +599,10 @@ xpElemAttrs name puAttrs = xpWrap (fst) (\a -> (a,())) $
 xpElemNodes :: Name -> PU [Node] b -> PU [Node] b
 xpElemNodes name puChildren = xpWrap (snd) (\a -> ((),a)) $
                                 xpElem name xpUnit puChildren
+
+-- | A helper variant of xpElem for elements that contain only character data
+xpElemText :: Name -> PU [Node] Text
+xpElemText name = xpElemNodes name $ xpContent xpId
 
 -- | Helper for Elements that don't contain anything
 xpElemBlank :: Name -> PU [Node] ()
@@ -695,7 +702,7 @@ xpWithDefault a pa = xpTryCatch pa (lift a)
 -- TODO:
 -- We could use Monoid m => m instead of [a], but that is for another day...
 
--- | Try to extract the reaming elements, fail if there are none
+-- | Try to extract the remainig elements, fail if there are none
 getRest :: (a, (Maybe [r], c)) -> (a, ([r], c))
 -- getRest (_, (Nothing, _)) = Left $ "Not enough elements"
 getRest (l, (Just r, c)) = (l,(r, c))
