@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 module Data.XML.Pickle.Generic
        ( xpGeneric
        )
