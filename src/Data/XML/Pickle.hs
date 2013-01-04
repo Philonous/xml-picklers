@@ -91,6 +91,7 @@ module Data.XML.Pickle (
   , xpUnit
   , xpZero
   , xpThrow
+  , xpIso
    -- * Value-preserving picklers
   , xpId
   , xpTrees
@@ -165,6 +166,7 @@ module Data.XML.Pickle (
   -- ** Wrappers
   -- *** value wrappers
   , xpWrap
+  , xpConst
   , xpWrapEither
   , xpWrapMaybe
   , xpWrapMaybe_
@@ -308,10 +310,13 @@ mapLeft f (Left l ) = Left $ f l
 
 type Attribute = (Name,[Content])
 
+-- | Isomorphic pickler
+xpIso :: (a -> b) -> (b -> a) -> PU a b
+xpIso f g = PU (\t -> Right (f t, (Nothing,True))) g
 
 -- | Returns everything (remaining), untouched.
 xpId :: PU a a
-xpId = PU (\t -> Right (t, (Nothing,True))) id
+xpId = xpIso id id
 
 -- | 'xpId' (/compat/)
 xpTrees :: PU a a
@@ -850,6 +855,9 @@ xpWrap to from xp = ("xpWrap","") <?+>
                     PU { unpickleTree = \x -> (first to) <$> unpickleTree xp x
                        , pickleTree = pickleTree xp . from
                        }
+
+xpConst :: a -> PU t () -> PU t a
+xpConst c xp = ("xpConst" ,"") <?> xpWrap (const c) (const ()) xp
 
 -- | Convert XML text content \<-\> any type that implements 'Read' and 'Show'.
 -- Fails on unpickle if 'read' fails.
