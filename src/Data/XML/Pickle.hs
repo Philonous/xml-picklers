@@ -1116,6 +1116,19 @@ xpAddFixedAttr name val pa
     = xpWrap snd ((,) ()) $
       xp2Tuple (xpAttrFixed name val) pa
 
+xpFst :: Monoid b => PU t (a, b) -> PU t a
+xpFst = xpWrap fst (\x -> (x, mempty))
+
+xpSnd :: Monoid a => PU t (a, b) -> PU t b
+xpSnd = xpWrap snd (\y -> (mempty, y))
+
+xpMayFail :: PU t a -> PU t a
+xpMayFail xp = PU { pickleTree = pickleTree xp
+                  , unpickleTree = \v -> case unpickleTree xp v of
+                      UnpickleError _ -> NoResult "failed with xpMayFail"
+                      x -> x
+                  }
+
 -- | Discard any leftover elements
 --
 -- When pickling, this is a noop
