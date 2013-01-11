@@ -81,10 +81,11 @@
 --
 -- Funktions marked with /compat/ are included for compatibility with hexpat-pickle
 
-module Data.XML.Pickle {- (
+module Data.XML.Pickle (
   -- * Types
   PU(..)
   , Attribute
+  , UnpickleResult(..)
   -- * Pickler Invocation
   , pickle
   , unpickle
@@ -172,6 +173,7 @@ module Data.XML.Pickle {- (
   , xpWrapMaybe
   , xpWrapMaybe_
   , xpAssert
+  , xpMayFail
   , xpUnliftElems
   -- *** Book keeping
   -- | Change the semantics of picklers
@@ -183,12 +185,7 @@ module Data.XML.Pickle {- (
   -- so the may be
   --
   -- [@clean@] an unpickling is considered @clean@ when it doesn't leave any remainng elements
-  --
-  -- [@recursively clean@] an unpickling is considered @recursively clean@ if it and any nested picklers are clean
-  --
-
   , xpClean
-  , xpRecursiveClean
   -- * Error handling
   , UnpickleError(..)
   , ppUnpickleError
@@ -198,7 +195,7 @@ module Data.XML.Pickle {- (
   , UnresolvedEntityException(..)
   -- * helper functions
   , flattenContent
-) -}  where
+)   where
 
 import Control.Applicative ((<$>))
 import Control.Arrow
@@ -260,13 +257,19 @@ upe e = ErrorMessage (Text.pack e)
 missing e = upe $ "Entity not found: " ++ e
 missingE = UnpickleError . missing
 
-leftoverE = UnpickleError . upe $ "Leftover Entities"
+leftoverE l = UnpickleError . upe $ "Leftover Entities" ++ if null l then "" else
+                                                             (": " ++ l)
 
-child :: PU a b -> a -> UnpickleResult t b
 child xp v = case unpickleTree xp v of
     UnpickleError e -> UnpickleError e
     NoResult e -> missingE $ Text.unpack e
-    Result _ (Just _) -> leftoverE
+    Result _ (Just es) -> leftoverE $ show es
+    Result r Nothing -> Result r Nothing
+
+child' xp v = case unpickleTree xp v of
+    UnpickleError e -> UnpickleError e
+    NoResult e -> missingE $ Text.unpack e
+    Result _ (Just es) -> leftoverE ""
     Result r Nothing -> Result r Nothing
 
 leftover t = Result () t
@@ -294,6 +297,10 @@ infixl 6 <++>
 (<++>) :: (Text, Text) -> UnpickleError -> UnpickleError
 (<++>) s e = TraceStep s e
 
+infixl 6 <++.>
+(<++.>) :: (Text, Text) -> UnpickleResult t a -> UnpickleResult t a
+(<++.>) s = mapUnpickleError (s <++>)
+
 infixr 0 <?>
 -- | Override the last backtrace level in the error report
 (<?>) :: (Text, Text) -> PU t a -> PU t a
@@ -302,7 +309,7 @@ infixr 0 <?>
     swapStack ns (TraceStep s e) = TraceStep ns e
     swapStack ns e = error $ "Can't replace non-trace step: " ++ show e
 
-
+(<??>) :: Text -> PU t a -> PU t a
 (<??>) tr = mapError (swapStack tr)
   where
     swapStack ns (TraceStep (_,s) e) = TraceStep (ns,s) e
@@ -356,7 +363,7 @@ xpIso f g = PU (\t -> Result (f t) Nothing) g
 
 -- | Doesn't create or consume anything, always succeeds
 xpUnit :: PU [a] ()
-xpUnit = PU (\x -> Result () (Just x)) (const [])
+xpUnit = PU (\x -> Result () (remList x)) (const [])
 
 
 -- | Returns everything (remaining), untouched.
@@ -405,7 +412,7 @@ xpWrapMaybe_ errorMsg a2b b2a pua = ("xpWrapMaybe_","") <?+> PU {
 --
 -- in which @Just 5@ is encoded as @\<score value=\"5\"\/\>@ and @Nothing@
 -- as @\<score\/\>@.
-xpOption :: Monoid t => PU t a -> PU t (Maybe a)
+xpOption :: PU [t] a -> PU [t] (Maybe a)
 xpOption pu = PU { unpickleTree = doUnpickle
                  , pickleTree = \mValue ->
                       case mValue of
@@ -416,7 +423,7 @@ xpOption pu = PU { unpickleTree = doUnpickle
     doUnpickle t =
         case unpickleTree pu t of
             Result r t' -> Result (Just r) t'
-            NoResult e -> Result Nothing (Just t)
+            NoResult e -> Result Nothing (remList t)
             UnpickleError e -> UnpickleError e
 
 -- | return one element, untouched
@@ -493,8 +500,8 @@ xpAttribute name pu = ("xpAttr" , Text.pack $ ppName name) <?+> PU
       Just ((_,[ContentText x]), rem) -> case unpickleTree pu x of
         NoResult e -> missingE $ Text.unpack e
         UnpickleError e -> UnpickleError e
-        Result _ (Just e) -> leftoverE
-        Result r Nothing  -> Result r Nothing
+        Result _ (Just e) -> leftoverE $ show e
+        Result r Nothing  -> Result r (remList rem)
       _ -> UnpickleError $ upe ("Unresolved entities in " ++ ppName name ++ ".")
 
 -- | (/compat/)
@@ -553,8 +560,8 @@ xpElem name attrP nodeP = tr <?+> PU
          } where
     doUnpickleTree nodes = case getFirst (nodeElementNameHelper name) nodes of
       Just ((NodeElement (Element _ attrs children)), rem) -> do
-          as <- child attrP attrs
-          cs <- child nodeP (flattenContent children)
+          as <- ("attrs","") <++.> child attrP attrs
+          cs <- ("children","") <++.> child nodeP (flattenContent children)
           leftover $ remList rem
           return (as, cs)
       _ -> NoResult $ Text.pack $ ppName name
@@ -584,7 +591,7 @@ xpAll :: PU [a] b -> PU [a] [b]
 xpAll xp = PU { unpickleTree = doUnpickleTree
                      , pickleTree = \xs -> concatMap (pickleTree xp) xs
                      } where
-  doUnpickleTree xs = mapM (child xp . return) xs
+  doUnpickleTree xs = mapM (child' xp . return) xs
 
 -- | For unpickling, apply the given pickler to a subset of the elements
 -- determined by a given predicate
@@ -597,7 +604,7 @@ xpSubsetAll pred xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
                      let (targets, rest) = partition pred t in
                      do
                          leftover $ remList rest
-                         child (xpAll xp) targets
+                         child' (xpAll xp) targets
                      , pickleTree = pickleTree (xpAll $ xp)
              }
 
@@ -938,7 +945,7 @@ xpFindMatches xp = PU { unpickleTree = doUnpickleTree
           case unpickleTree xp [x] of
             NoResult _ -> Left x
             Result r Nothing -> Right $ Result r Nothing
-            Result r (Just e) -> Right $ leftoverE
+            Result r (Just _) -> Right $ leftoverE ""
             UnpickleError e -> Right $ UnpickleError e
         in leftover (remList ls) >> sequence rs
 
@@ -1016,10 +1023,10 @@ xpWrapEither a2b b2a pua = ("xpWrapEither","") <?+>
         pickleTree = \value -> pickleTree pua (b2a value)
     }
 
--- | Execute one of a list of picklers. The /selector function/ is used during pickling, and
--- the integer returned is taken as a 0-based index to select a pickler from /pickler options/.
--- Unpickling is done by trying each list element in order until one succeeds
--- (the /selector/ is not used).
+-- | Execute one of a list of picklers. The /selector function/ is used during
+-- pickling, and the integer returned is taken as a 0-based index to select a
+-- pickler from /pickler options/.  Unpickling is done by trying each list
+-- element in order until one returns a Result.  (the /selector/ is not used).
 --
 -- This is typically used to handle each constructor of a data type. However, it
 -- can be used wherever multiple serialization strategies apply to a single type.
@@ -1031,16 +1038,14 @@ xpAlt selector picklers = PU {
         pickleTree = \value -> pickleTree (picklers !! (selector value)) value
     }
   where
-    doUnpickle t =
-        let tryAll [] = UnpickleError $ upe "No Picklers given"
-            tryAll (x:xs) =
-                case unpickleTree x t of
-                    Result r t -> Result r t
-                    NoResult e -> case tryAll xs of
-                      Result r t -> Result r t
-                      e -> e
-                    UnpickleError e -> UnpickleError e
-        in tryAll picklers
+    eitherResult (Result r t) = Right (Result r t)
+    eitherResult (UnpickleError e) = Left $ e
+    eitherResult (NoResult e) = Left . missing $ Text.unpack e
+    splitResults v = partitionEithers $ map (eitherResult . flip unpickleTree v)
+                                     picklers
+    doUnpickle v = case splitResults v of
+        (_, (Result r t):_) -> Result r t
+        (es, []) -> ("xpAlt", "") <++.> UnpickleError (Variants es)
 
 -- | Try the left pickler first and if that doesn't produce anything the right
 -- one.  wrapping the result in Left or Right, respectively
@@ -1130,6 +1135,6 @@ instance Cat.Category PU where
                    Result resf rem -> case unpickleTree g resf of
                        UnpickleError e -> UnpickleError e
                        NoResult e -> NoResult e
-                       Result _ (Just _) -> leftoverE
+                       Result _ (Just _) -> leftoverE ""
                        Result resg Nothing -> Result resg rem
                }
