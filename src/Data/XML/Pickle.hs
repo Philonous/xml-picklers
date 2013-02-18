@@ -96,6 +96,8 @@ module Data.XML.Pickle (
   , xpIso
    -- * Value-preserving picklers
   , xpId
+  , xpFst
+  , xpSnd
   , xpTrees
   , xpHead
   , xpTree
@@ -106,6 +108,9 @@ module Data.XML.Pickle (
   , xpPrim
   -- * XML specific picklers
   -- ** Attributes
+  , xpAttribute
+  , xpAttribute'
+  , xpAttribute_
   , xpAttr
   , xpAttrImplied
   , xpAttrFixed
@@ -204,6 +209,7 @@ import qualified Control.Category as Cat
 import Data.Either
 import Data.List(partition)
 import Data.Monoid(Monoid, mempty, mappend)
+import Data.Char(isSpace)
 
 import Control.Exception
 import Control.Monad
@@ -541,8 +547,8 @@ flattenContent xs = case foldr (\x (buf, res) -> case x of
   where
     nc = NodeContent . ContentText
     addConcatText [] = id
-    addConcatText xs = (nc (Text.concat xs) :)
-
+    addConcatText xs = let txt = Text.concat xs in
+        if Text.all isSpace txt then id else  (nc txt :)
 
 -- | When unpickling, tries to find the first element with the supplied name.
 -- Once such an element is found, it will commit to it and /fail/ if any of the
@@ -588,9 +594,10 @@ xpElems name attrs children = tr <?> xpSubsetAll isThisElem
 -- | Tries to apply the pickler to all the remaining elements;
 -- fails if any of them don't match
 xpAll :: PU [a] b -> PU [a] [b]
-xpAll xp = PU { unpickleTree = doUnpickleTree
-                     , pickleTree = \xs -> concatMap (pickleTree xp) xs
-                     } where
+xpAll xp = ("xpAll", "") <?+> PU { unpickleTree = doUnpickleTree
+                                 , pickleTree = \xs ->
+                                     concatMap (pickleTree xp) xs
+                                 } where
   doUnpickleTree xs = mapM (child' xp . return) xs
 
 -- | For unpickling, apply the given pickler to a subset of the elements
