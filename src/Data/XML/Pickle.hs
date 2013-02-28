@@ -16,17 +16,14 @@
 --
 --  * There are no lazy unpicklers
 --
---  * Unpicklers keep track of whether they (and any nested picklers) consumed all input, giving rise to the 'xpClean' and 'xpRecursiveClean' combinators
+--  * Most unpicklers will produce an error when their child unpicklers fail to consume all elements.
+-- Use 'xpClean' to discard those elements
 --
 -- The data type @'PU' t a@ represents both a pickler (converting Haskell data
 -- to XML) and an unpickler (XML to Haskell data), so your code only needs to be
 -- written once for both serialization and deserialization.  The 'PU' primitives, such
 -- as 'xpElem' for XML elements, may be composed into complex arrangements using
 -- 'xpPair' and other combinators.
---
--- The reason why you a list of nodes instead of just one when working with a single
--- element is because the unpickler of 'xpElem' needs to see the whole list of nodes
--- so that it can 1. skip whitespace, and 2. search to match the specified tag name.
 --
 -- Most picklers will try to find the /first match/ rather than failing when
 -- the first element doesn't match. This is why the target type often ist
@@ -41,9 +38,12 @@
 -- /NB/: Unresolved entities are considered an error and will trigger an exception
 --
 -- When unpickling, the folowing invariant regarding the list of remaining elements should be observed:
+--
 -- * The returned list should be a subset of or the initial list itself, that is, no elements should be added
 -- or changed
+--
 -- * The relative order of elements should be preserved
+--
 -- * Elements may, however, be removed from anywhere in the list
 --
 -- Here is a simple example to get you started:
@@ -244,8 +244,15 @@ ppUnpickleError e = "Error while unpickling:\n"
 instance Exception UnpickleError
 
 data UnpickleResult t a = UnpickleError UnpickleError
-                        | NoResult Text -- | Not found, description of element
-                        | Result a (Maybe t) -- result and remainder
+                        | NoResult Text -- ^ Not found, description of element
+                        | Result a (Maybe t) -- ^ Result and remainder. The
+                                             -- remainder is wrapped in Maybe to
+                                             -- avoid a Monoid constraint on t.
+                                             --
+                                             --  /Invariant/: When t is a
+                                             -- Monoid, the empty remainder should
+                                             -- always be @Nothing@ instead of
+                                             -- @Just mempty@
                           deriving (Functor, Show)
 
 instance Monad (UnpickleResult t) where
@@ -288,9 +295,6 @@ mapUnpickleError _ x = x
 
 data PU t a = PU
   { unpickleTree :: t -> UnpickleResult t a
-                    -- ^ Either an error or the return value,
-                    -- any remaining input and a Bool value indicating whether
-                    -- all nested picklers where clean
   , pickleTree :: a -> t
   }
 
@@ -346,7 +350,7 @@ ppName (Name local ns pre) = let
 pickle :: PU t a -> a -> t
 pickle = pickleTree
 
--- | unpickle a tree, throws away information concerning cleannes
+-- | unpickle a tree
 unpickle :: PU t a -> t -> Either UnpickleError a
 unpickle xp x = case unpickleTree xp x of
     UnpickleError e -> Left e
@@ -473,8 +477,9 @@ xpAssert err p xp = ("xpAssert",err) <?+>
 xpText :: PU Text Text
 xpText = ("xpText","") <?> xpAssert "Input is empty" (not . Text.null) xpText0
 
--- | Adapts a list of nodes to a single node. Generally used at the top level of
--- an XML document.
+-- | Transforms a pickler on Lists to a pickler on single elements.
+--
+-- /N.B./ Will error when the given pickler doesn't produce exactly one element
 xpRoot ::PU [a] b -> PU a b
 xpRoot pa = ("xpRoot","") <?+> PU
        { unpickleTree = \t -> case unpickleTree pa [t] of
@@ -616,7 +621,7 @@ xpSubsetAll pred xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
              }
 
 
--- | Apply unpickler to all elements with the given ns.
+-- | Apply unpickler to all elements with the given namespace.
 --
 -- Pickles like 'xpAll'.
 xpAllByNamespace :: Text -> PU [Node] b -> PU [Node] [b]
@@ -683,7 +688,7 @@ xpElemByNamespace ns nameP attrP nodeP = tr ns <?+> PU
 -- | Pickler Returns the first found Element untouched
 --
 -- Unpickler wraps element in 'NodeElement'
-xpElemVerbatim ::  PU [Node] (Element)
+xpElemVerbatim ::  PU [Node] Element
 xpElemVerbatim = PU
          { unpickleTree = doUnpickleTree
          , pickleTree   = \e -> [NodeElement e]
@@ -1129,6 +1134,7 @@ xpFst = xpWrap fst (\x -> (x, mempty))
 xpSnd :: Monoid a => PU t (a, b) -> PU t b
 xpSnd = xpWrap snd (\y -> (mempty, y))
 
+-- | Instead of failing the pickler will return no result
 xpMayFail :: PU t a -> PU t a
 xpMayFail xp = PU { pickleTree = pickleTree xp
                   , unpickleTree = \v -> case unpickleTree xp v of
@@ -1136,7 +1142,7 @@ xpMayFail xp = PU { pickleTree = pickleTree xp
                       x -> x
                   }
 
--- | Discard any leftover elements
+-- | Run unpickler and consume and discard remaining elements
 --
 -- When pickling, this is a noop
 xpClean :: PU t a -> PU t a
