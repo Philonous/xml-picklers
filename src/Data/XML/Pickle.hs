@@ -154,6 +154,7 @@ module Data.XML.Pickle (
   -- The List pickler combinators will pickle lists in the given order
   -- without any special treatment and unpickle as stated.
   , xpFindMatches
+  , xpFindFirst
   , xpAll
   , xpSubsetAll
   , xpAllByNamespace
@@ -932,6 +933,27 @@ xpIsolate xp = ("xpIsolate","") <?+>
   handleRest r xs = case mbToList r ++ xs of [] -> Nothing; rs -> Just rs
   mbToList Nothing = []
   mbToList (Just r) = r
+
+-- | Select a single element from the list and apply unpickler to it.
+--
+-- Returns no value when no element matches the predicate
+--
+-- Fails when the unpickler doesn't return a value
+--
+-- When pickling, this is a noop
+xpFindFirst :: (t -> Bool) -> PU [t] a -> PU [t] a
+xpFindFirst p xp = ("xpFindFirst","") <?+>
+                 PU { pickleTree = pickleTree xp
+                    , unpickleTree = \xs -> case break p xs of
+                        (_, []) -> NoResult "entity"
+                        (xs,y:ys) -> case unpickleTree xp [y] of
+                            Result r Nothing -> Result r (remList $ xs++ys)
+                            Result r (Just _) -> leftoverE ""
+                            NoResult e -> missingE "entity"
+                            x -> x
+                    }
+
+
 
 xpConst :: a -> PU t () -> PU t a
 xpConst c xp = ("xpConst" ,"") <?> xpWrap (const c) (const ()) xp
