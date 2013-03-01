@@ -663,7 +663,7 @@ xpElemByNamespace :: Text -- ^ Namespace
                   -> PU [Attribute] a  -- ^ pickler for attributes
                   -> PU [Node] n    -- ^ pickler for child nodes
                   -> PU [Node] (name,a,n)
-xpElemByNamespace ns nameP attrP nodeP = tr ns <?+> PU
+xpElemByNamespace ns nameP attrP nodeP = PU
          { unpickleTree = doUnpickleTree
          , pickleTree   = \(name, a,n) -> [NodeElement $ Element
                                      (Name (pickleTree nameP name) (Just ns) Nothing)
@@ -672,16 +672,23 @@ xpElemByNamespace ns nameP attrP nodeP = tr ns <?+> PU
                                     ]
          } where
     doUnpickleTree nodes = case getFirst (nodeElementNSHelper ns) nodes of
-      Just ((NodeElement (Element name attrs children)), rem) ->
+      Just ((NodeElement (Element name attrs children)), rem) -> tr name $
           do
               name'  <- child nameP (nameLocalName name)
               attrs' <- child attrP attrs
-              nodes' <- child nodeP nodes
+              nodes' <- child nodeP children
               leftover $ remList rem
               return (name', attrs', nodes')
 
       _ -> NoResult $ "Element with namepspace " `Text.append` ns
-    tr a = ("xpElemByNamespace", Text.concat [ns, " ; ", a])
+    tr a res = case res of
+        UnpickleError e -> UnpickleError (TraceStep
+                                            ( "xpElemByNamespace"
+                                            , Text.concat [ ns
+                                                          , " ; "
+                                                          , nameLocalName a])
+                                          e)
+        x -> x
 
     nodeElementNSHelper ns (NodeElement (Element n _ _)) = nameNamespace n == Just ns
     nodeElementNSHelper ns _ = False
