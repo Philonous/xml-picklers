@@ -953,11 +953,9 @@ xpFindFirst p xp = ("xpFindFirst","") <?+>
                  PU { pickleTree = pickleTree xp
                     , unpickleTree = \xs -> case break p xs of
                         (_, []) -> NoResult "entity"
-                        (xs,y:ys) -> case unpickleTree xp [y] of
-                            Result r Nothing -> Result r (remList $ xs++ys)
-                            Result r (Just _) -> leftoverE ""
-                            NoResult e -> missingE "entity"
-                            x -> x
+                        (xs,y:ys) -> do
+                            leftover . remList $ xs ++ ys
+                            child' xp [y]
                     }
 
 
