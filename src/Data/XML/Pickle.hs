@@ -724,7 +724,7 @@ xpElemText name = xpElemNodes name $ xpContent xpId
 
 -- | Helper for Elements that don't contain anything
 xpElemBlank :: Name -> PU [Node] ()
-xpElemBlank name = xpWrap (const () ) (const ((),())) $
+xpElemBlank name = ("xpElemBlank", "") <?> xpWrap (const () ) (const ((),())) $
                                 xpElem name xpUnit xpUnit
 
 -- | When pickling, creates an empty element iff parameter is True
@@ -732,7 +732,8 @@ xpElemBlank name = xpWrap (const () ) (const ((),())) $
 -- When unpickling, checks whether element exists. Generates an error when the
 -- element is not empty
 xpElemExists :: Name -> PU [Node] Bool
-xpElemExists name = xpWrap (\x -> case x of Nothing -> False; Just _ -> True)
+xpElemExists name = ("xpElemBlank", "") <?>
+                    xpWrap (\x -> case x of Nothing -> False; Just _ -> True)
                            (\x -> if x then Just () else Nothing) $
                            xpOption (xpElemBlank name)
 
