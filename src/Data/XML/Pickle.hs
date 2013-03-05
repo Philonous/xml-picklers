@@ -127,6 +127,7 @@ module Data.XML.Pickle (
   , xpElems
    -- ** Character Content
   , xpContent
+  , xpBool
    -- * Pickler combinators
    -- ** choice
   , xpOption
@@ -384,6 +385,32 @@ xpId = xpIso id id
 -- | 'xpId' (/compat/)
 xpTrees :: PU a a
 xpTrees = xpId
+
+-- | Converts Booleans to XML boolean values
+--
+-- * true and 1 are read as True
+--
+-- * false and 0 are read as False
+--
+-- * all other values generate an unpickle error
+--
+-- Will always generate true or false (not 0 or 1) when pickling
+xpBool :: PU Text Bool
+xpBool = ("xpBool" ,"") <?+> PU
+          { unpickleTree =
+                 \v -> case () of ()
+                                      | v `elem` ["true",  "1"] ->
+                                          Result True Nothing
+                                      | v `elem` ["false", "0"] ->
+                                          Result False Nothing
+                                      | otherwise -> UnpickleError
+                                                     (ErrorMessage $
+                                                      "Not a boolean value: "
+                                                      `Text.append` v)
+          , pickleTree = \v -> case v of
+                     True -> "true"
+                     False -> "false"
+          }
 
 -- | Apply a bijection before pickling / after unpickling
 xpWrap :: (a -> b) -> (b -> a) -> PU t a -> PU t b
