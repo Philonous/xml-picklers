@@ -986,8 +986,7 @@ xpFindFirst p xp = ("xpFindFirst","") <?+>
                             child' xp [y]
                     }
 
-
-
+-- | Ignore input/output and replace with constant values
 xpConst :: a -> PU t () -> PU t a
 xpConst c xp = ("xpConst" ,"") <?> xpWrap (const c) (const ()) xp
 
