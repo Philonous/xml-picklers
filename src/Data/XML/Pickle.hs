@@ -331,9 +331,20 @@ mapUnpickleError f (UnpickleError e) = (UnpickleError $ f e)
 mapUnpickleError _ x = x
 
 data PU t a = PU
-  { hints :: [(Text, Text)]
-  , unpickleTree :: t -> UnpickleResult t a
-  , pickleTree :: a -> t
+  { hints :: [(Text, Text)] -- ^ Describes the picklers. Each list element
+                            -- describes one nested pickler (in case of composed
+                            -- picklers). Each pair consists of the name of the
+                            -- pickler and more identifying information
+                            -- (e.g. the name of the expected element). The
+                            -- outermost pickler comes first.
+                            --
+                            -- This information will be added to the error trace
+                            -- by unpickleError.
+  , unpickleTree :: t -> UnpickleResult t a -- ^ The unpickling function. You
+                                            -- should use 'unpickle' instead
+                                            -- since it will add the hints to
+                                            -- the error trace
+  , pickleTree :: a -> t -- ^ the pickle function.
   }
 
 infixl 6 <++>
