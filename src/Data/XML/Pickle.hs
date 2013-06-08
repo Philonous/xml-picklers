@@ -1,6 +1,10 @@
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, FlexibleContexts, TypeSynonymInstances,
-            UndecidableInstances, FunctionalDependencies, DeriveDataTypeable #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | This module provides XML picklers that plug into the xml tree of the
@@ -240,12 +244,12 @@ printUPE (ErrorMessage m) = [Text.unpack m]
 printUPE (TraceStep t es) = ("-> " ++ showTr  t) : printUPE es
 printUPE (Variants vs) = concat
                        . zipWith (:) (map (\x -> show x ++ ")") [(1 :: Int)..])
-                       . (map $ map ( "  " ++))
+                       . map (map ( "  " ++))
                        $ (printUPE <$> vs)
 
 ppUnpickleError :: UnpickleError -> String
 ppUnpickleError e = "Error while unpickling:\n"
-                      ++ (unlines $ map ("  " ++) (printUPE e))
+                      ++ unlines (map ("  " ++) (printUPE e))
 
 instance Exception UnpickleError
 
@@ -281,7 +285,7 @@ missingE = UnpickleError . missing
 
 leftoverE :: String -> UnpickleResult t a
 leftoverE l = UnpickleError . upe $ "Leftover Entities" ++ if null l then "" else
-                                                             (": " ++ l)
+                                                             ": " ++ l
 child :: Show a => PU a b -> a -> UnpickleResult t b
 child xp v = case unpickleTree xp v of
     UnpickleError e -> UnpickleError e
@@ -297,7 +301,7 @@ child' xp v = case unpickleTree xp v of
     Result r Nothing -> Result r Nothing
 
 leftover :: Maybe t -> UnpickleResult t ()
-leftover t = Result () t
+leftover = Result ()
 
 remList :: [t] -> Maybe [t]
 remList [] = Nothing
@@ -306,7 +310,7 @@ remList xs = Just xs
 mapUnpickleError :: (UnpickleError -> UnpickleError)
                  -> UnpickleResult t a
                  -> UnpickleResult t a
-mapUnpickleError f (UnpickleError e) = (UnpickleError $ f e)
+mapUnpickleError f (UnpickleError e) = UnpickleError $ f e
 mapUnpickleError _ x = x
 
 data PU t a = PU
@@ -322,7 +326,7 @@ mapError f xp = PU { unpickleTree = mapUnpickleError f . unpickleTree xp
 
 infixl 6 <++>
 (<++>) :: (Text, Text) -> UnpickleError -> UnpickleError
-(<++>) s e = TraceStep s e
+(<++>) = TraceStep
 
 infixl 6 <++.>
 (<++.>) :: (Text, Text) -> UnpickleResult t a -> UnpickleResult t a
@@ -347,7 +351,7 @@ infixr 0 <?>
 infixr 1 <?+>
 -- | Add a back trace level to the error report
 (<?+>) :: (Text, Text) -> PU t a -> PU t a
-(<?+>) tr = mapError ((<++>) tr)
+(<?+>) tr = mapError (tr <++>)
 
 data UnresolvedEntityException = UnresolvedEntityException
                                    deriving (Typeable, Show)
@@ -386,7 +390,7 @@ xpIso f g = PU (\t -> Result (f t) Nothing) g
 
 -- | Doesn't create or consume anything, always succeeds
 xpUnit :: PU [a] ()
-xpUnit = PU (\x -> Result () (remList x)) (const [])
+xpUnit = PU (Result () . remList) (const [])
 
 
 -- | Returns everything (remaining), untouched.
@@ -446,7 +450,7 @@ xpWrapMaybe_ errorMsg a2b b2a pua = ("xpWrapMaybe_","") <?+> PU {
                     Nothing   -> UnpickleError $ upe errorMsg
             NoResult e -> NoResult e
             UnpickleError e  -> UnpickleError e
-        , pickleTree = \value -> pickleTree pua (b2a value)
+        , pickleTree = pickleTree pua  . b2a
     }
 
 
@@ -535,7 +539,7 @@ getFirst :: (t -> Bool) -> [t] -> Maybe (t, [t])
 getFirst _ [] = Nothing
 getFirst p (x:xs) = case p x of
       True  -> Just (x,xs)
-      False -> (second (x:)) <$> getFirst p xs
+      False -> second (x:) <$> getFirst p xs
 
 
 -- | pickle to/from attribute
@@ -609,7 +613,7 @@ xpElem name attrP nodeP = tr <?+> PU
                                     ]
          } where
     doUnpickleTree nodes = case getFirst (nodeElementNameHelper name) nodes of
-      Just ((NodeElement (Element _ attrs children)), rem') -> do
+      Just (NodeElement (Element _ attrs children), rem') -> do
           as <- ("attrs","") <++.> child attrP attrs
           cs <- ("children","") <++.> child nodeP (flattenContent children)
           leftover $ remList rem'
@@ -639,10 +643,9 @@ xpElems name attrs children = tr <?> xpSubsetAll isThisElem
 -- fails if any of them don't match
 xpAll :: PU [a] b -> PU [a] [b]
 xpAll xp = ("xpAll", "") <?+> PU { unpickleTree = doUnpickleTree
-                                 , pickleTree = \xs ->
-                                     concatMap (pickleTree xp) xs
+                                 , pickleTree = concatMap (pickleTree xp)
                                  } where
-  doUnpickleTree xs = mapM (child' xp . return) xs
+  doUnpickleTree = mapM (child' xp . return)
 
 -- | For unpickling, apply the given pickler to a subset of the elements
 -- determined by a given predicate
@@ -656,7 +659,7 @@ xpSubsetAll p xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
                      do
                          leftover $ remList rest
                          child' (xpAll xp) targets
-                     , pickleTree = pickleTree (xpAll $ xp)
+                     , pickleTree = pickleTree $ xpAll xp
              }
 
 
@@ -686,13 +689,13 @@ xpElemWithName attrP nodeP = ("xpElemWithName", "") <?+> PU
                                     ]
          } where
     doUnpickleTree nodes = case getFirst nodeElementHelper nodes of
-      Just ((NodeElement (Element name attrs children)), rem') -> do
+      Just (NodeElement (Element name attrs children), rem') -> do
           x <- child attrP attrs
           y <- child nodeP $ flattenContent children
           leftover $ remList rem'
           return (name, x, y)
       _ -> NoResult "element"
-    nodeElementHelper (NodeElement (Element _ _ _)) = True
+    nodeElementHelper (NodeElement Element{}) = True
     nodeElementHelper _ = False
 
 -- | find element by name space, prefixes are ignored
@@ -710,7 +713,7 @@ xpElemByNamespace ns nameP attrP nodeP = PU
                                     ]
          } where
     doUnpickleTree nodes = case getFirst (nodeElementNSHelper ns) nodes of
-      Just ((NodeElement (Element name attrs children)), rem') -> tr name $
+      Just (NodeElement (Element name attrs children), rem') -> tr name $
           do
               name'  <- child nameP (nameLocalName name)
               attrs' <- child attrP attrs
@@ -740,20 +743,20 @@ xpElemVerbatim = PU
          , pickleTree   = \e -> [NodeElement e]
          } where
     doUnpickleTree nodes = case getFirst nodeElementHelper nodes of
-      Just ((NodeElement e@(Element _ _ _)), re) -> Result e (remList re)
+      Just (NodeElement e@Element{}, re) -> Result e (remList re)
       _ -> NoResult "element"
 
-    nodeElementHelper (NodeElement (Element _ _ _)) = True
+    nodeElementHelper (NodeElement Element{}) = True
     nodeElementHelper _ = False
 
 -- | A helper variant of xpElem for elements that contain attributes but no child tags.
 xpElemAttrs :: Name -> PU [Attribute] b -> PU [Node] b
-xpElemAttrs name puAttrs = xpWrap (fst) (\a -> (a,())) $
+xpElemAttrs name puAttrs = xpWrap fst (\a -> (a,())) $
                              xpElem name puAttrs xpUnit
 
 -- | A helper variant of xpElem for elements that contain child nodes but no attributes.
 xpElemNodes :: Name -> PU [Node] b -> PU [Node] b
-xpElemNodes name puChildren = xpWrap (snd) (\a -> ((),a)) $
+xpElemNodes name puChildren = xpWrap snd (\a -> ((),a)) $
                                 xpElem name xpUnit puChildren
 
 -- | A helper variant of xpElem for elements that contain only character data
@@ -783,8 +786,8 @@ xpContent xp = ("xpContent","") <?+> PU
        , pickleTree = return . NodeContent . ContentText . pickleTree xp
        } where
      doUnpickle nodes = case getFirst nodeContentHelper nodes of -- flatten
-       Just ((NodeContent (ContentText t)), _re) -> child xp t
-       Just ((NodeContent (ContentEntity t)), _) ->
+       Just (NodeContent (ContentText t), _re) -> child xp t
+       Just (NodeContent (ContentEntity t), _) ->
            UnpickleError . upe $ "Unresolved entity" ++ show t ++ "."
        _ -> NoResult "node content"
 
@@ -846,7 +849,7 @@ getRest :: UnpickleResult [a] b -> UnpickleResult [a] (b, [a])
 getRest (Result r (Just t)) = Result (r, t) Nothing
 getRest (Result r Nothing) = Result (r, []) Nothing
 getRest (NoResult e) = missingE $ Text.unpack e
-getRest (UnpickleError e) = (UnpickleError e)
+getRest (UnpickleError e) = UnpickleError e
 
 tErr :: Text -> UnpickleResult t a -> UnpickleResult t a
 tErr tr = mapUnpickleError (("tuple", tr) <++>)
@@ -1097,7 +1100,7 @@ xpWrapEither a2b b2a pua = ("xpWrapEither","") <?+>
             NoResult e -> NoResult e
             UnpickleError e -> UnpickleError e
         ,
-        pickleTree = \value -> pickleTree pua (b2a value)
+        pickleTree = pickleTree pua . b2a
     }
 
 -- | Execute one of a list of picklers. The /selector function/ is used during
@@ -1112,16 +1115,16 @@ xpAlt :: (a -> Int)  -- ^ selector function
       -> PU t a
 xpAlt selector picklers = PU {
         unpickleTree = doUnpickle,
-        pickleTree = \value -> pickleTree (picklers !! (selector value)) value
+        pickleTree = \value -> pickleTree (picklers !! selector value) value
     }
   where
     eitherResult (Result r t) = Right (Result r t)
-    eitherResult (UnpickleError e) = Left $ e
+    eitherResult (UnpickleError e) = Left e
     eitherResult (NoResult e) = Left . missing $ Text.unpack e
     splitResults v = partitionEithers $ map (eitherResult . flip unpickleTree v)
                                      picklers
     doUnpickle v = case splitResults v of
-        (_, (Result r t):_) -> Result r t
+        (_, Result r t:_) -> Result r t
         (es, []) -> ("xpAlt", "") <++.> UnpickleError (Variants es)
         _ -> error "xpAlt: splitResults returned impossible result"
 
