@@ -123,6 +123,7 @@ module Data.XML.Pickle (
   , xpZero
   , xpThrow
   , xpIso
+  , xpPartial
    -- * Value-preserving picklers
   , xpId
   , xpFst
@@ -444,6 +445,16 @@ xpIso f g = ("xpIso", "") <?+>
                         pu { unpickleTree = \t -> return $ f t
                            , pickleTree = g
                            }
+
+xpPartial :: (a -> Either Text b)
+          -> (b -> a)
+          -> PU a b
+xpPartial f g = ("xpEither", "") <?+>
+               PU { pickleTree = g
+                  , unpickleTree = \v -> case f v of
+                      Left e -> UnpickleError $ ErrorMessage e
+                      Right r -> Result r Nothing
+                  }
 
 -- | Doesn't create or consume anything, always succeeds
 xpUnit :: PU [a] ()
