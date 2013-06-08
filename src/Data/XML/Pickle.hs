@@ -92,9 +92,9 @@
 -- Note the "nickname" attribute.
 -- Unpickling this XML value will yield an UnpickleError:
 -- > unpickle xpPeople wrongPersonXml
--- > TraceStep ("xpElemNodes","\"people\"") (TraceStep ("children","") ...
+-- > Left (TraceStep ("xpElemNodes","\"people\"") (TraceStep ("children","") ...
 -- For better readability we can format the error nicely with 'ppUnpickleError':
--- > ppUnpickleError $ unpickle xpPeople wrongPersonXml
+-- > ppUnpickleError . fromLeft $ unpickle xpPeople wrongPersonXml
 -- > Error while unpickling:
 -- >   -> xpElemNodes ("people")
 -- >   -> children
@@ -105,7 +105,9 @@
 -- >   -> xpPair
 -- >   -> tuple (1)
 -- >   Entity not found: "name"
--- Funktions marked with /compat/ are included for
+--
+--
+-- Functions marked with /compat/ are included for
 -- compatibility with hexpat-pickle
 
 module Data.XML.Pickle (
