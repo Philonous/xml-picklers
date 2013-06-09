@@ -236,21 +236,21 @@ module Data.XML.Pickle (
   , flattenContent
   ) where
 
-import Control.Applicative (Applicative, (<$>), pure)
-import Control.Arrow
+import           Control.Applicative (Applicative, (<$>), pure)
+import           Control.Arrow
 import qualified Control.Category as Cat
-import Control.Exception
-import Control.Monad
-import Data.Char (isSpace)
-import Data.Either
-import Data.List (partition)
+import           Control.Exception
+import           Control.Monad
+import           Data.Char (isSpace)
+import           Data.Either
+import           Data.List (partition)
 import qualified Data.Map as M
-import Data.Maybe
-import Data.Monoid(Monoid, mempty, mappend)
-import Data.Text (Text)
+import           Data.Maybe
+import           Data.Monoid(Monoid, mempty, mappend)
+import           Data.Text (Text)
 import qualified Data.Text as Text
-import Data.Typeable
-import Data.XML.Types
+import           Data.Typeable
+import           Data.XML.Types
 
 data UnpickleError = ErrorMessage Text
                    | TraceStep (Text, Text) UnpickleError
@@ -309,14 +309,14 @@ leftoverE l = UnpickleError . upe $ "Leftover Entities" ++ if null l then "" els
                                                              (": " ++ l)
 
 child :: Show a => PU a b -> a -> UnpickleResult t b
-child xp v = case subPickler xp v of
+child xp v = case unpickleTree xp v of
     UnpickleError e -> UnpickleError e
     NoResult e -> missingE $ Text.unpack e
     Result _ (Just es) -> leftoverE $ show es
     Result r Nothing -> Result r Nothing
 
 child' :: PU t a -> t -> UnpickleResult s a
-child' xp v = case subPickler xp v of
+child' xp v = case unpickleTree xp v of
     UnpickleError e -> UnpickleError e
     NoResult e -> missingE $ Text.unpack e
     Result _ (Just es) -> leftoverE ""
@@ -349,6 +349,12 @@ data PU t a = PU
   , pickleTree :: a -> t -- ^ the pickle function.
   }
 
+pu :: PU t a
+pu = PU { hints = []
+        , unpickleTree = const undefined
+        , pickleTree = const undefined
+        }
+
 infixl 6 <++>
 (<++>) :: (Text, Text) -> UnpickleError -> UnpickleError
 (<++>) s e = TraceStep s e
@@ -370,7 +376,7 @@ infixr 0 <?-->
 
 -- | Drop one level of error traces
 dropTrace :: PU t a -> PU t a
-dropTrace xp = PU { hints = hints xp
+dropTrace xp = PU { hints = drop 1 $ hints xp
                   , pickleTree = pickleTree xp
                   , unpickleTree = \v -> case unpickleTree xp v of
                       UnpickleError (TraceStep _ e) -> UnpickleError e
@@ -379,7 +385,11 @@ dropTrace xp = PU { hints = hints xp
 
 -- | Add a hint to a pickler
 (<?+>) :: (Text, Text) -> PU t a -> PU t a
-(<?+>) h xp = xp{hints = h : hints xp}
+(<?+>) h xp = xp{ hints = h : hints xp
+                , unpickleTree = \v -> case unpickleTree xp v of
+                    UnpickleError e -> UnpickleError $ TraceStep h e
+                    x -> x
+                }
 
 -- | Replace hint and drop one backtrace level on error
 (<?->) :: (Text, Text) -> PU t a -> PU t a
@@ -412,7 +422,7 @@ traceSteps hs e = foldr TraceStep e hs
 -- | unpickle a tree
 unpickle :: PU t a -> t -> Either UnpickleError a
 unpickle xp x = case unpickleTree xp x of
-    UnpickleError e -> Left $ traceSteps (hints xp) e
+    UnpickleError e -> Left e
     NoResult e -> Left . traceSteps (hints xp) . ErrorMessage $ "Entity not found " `Text.append` e
     Result r _ -> Right r
 
@@ -430,21 +440,15 @@ type Attribute = (Name,[Content])
 
 -- | Isomorphic pickler
 xpIso :: (a -> b) -> (b -> a) -> PU a b
-xpIso f g = PU { hints = [("xpIso", "")]
-               , unpickleTree = \t -> return $ f t
-               , pickleTree = g
-               }
-
--- | Run a pickler and append it's hints to the error trace
-subPickler :: PU t a -> t -> UnpickleResult t a
-subPickler xp r = case unpickleTree xp r of
-    UnpickleError e -> UnpickleError $ traceSteps (hints xp) e
-    x -> x
+xpIso f g = ("xpIso", "") <?+>
+                        pu { unpickleTree = \t -> return $ f t
+                           , pickleTree = g
+                           }
 
 -- | Doesn't create or consume anything, always succeeds
 xpUnit :: PU [a] ()
-xpUnit = PU { hints = [("xpUnit", "")]
-            , unpickleTree = \x -> leftover $ remList x
+xpUnit = ("xpUnit", "") <?+>
+         pu { unpickleTree = \x -> leftover $ remList x
             , pickleTree = const []
             }
 
@@ -466,17 +470,16 @@ xpTrees = ("xpTree", "") <?> xpId
 --
 -- Will always generate true or false (not 0 or 1) when pickling
 xpBool :: PU Text Bool
-xpBool = PU { hints = [("xpBool", "")]
-            , unpickleTree =
-                   \v -> case () of ()
-                                        | v `elem` ["true",  "1"] ->
-                                            Result True Nothing
-                                        | v `elem` ["false", "0"] ->
-                                            Result False Nothing
-                                        | otherwise -> UnpickleError
-                                                       (ErrorMessage $
-                                                        "Not a boolean value: "
-                                                        `Text.append` v)
+xpBool = ("xpBool", "") <?+>
+         pu { unpickleTree = \v -> case () of ()
+                                                  | v `elem` ["true",  "1"] ->
+                                                      Result True Nothing
+                                                  | v `elem` ["false", "0"] ->
+                                                      Result False Nothing
+                                                  | otherwise -> UnpickleError
+                                                                 (ErrorMessage $
+                                                                  "Not a boolean value: "
+                                                                  `Text.append` v)
             , pickleTree = \v -> case v of
                        True -> "true"
                        False -> "false"
@@ -484,8 +487,8 @@ xpBool = PU { hints = [("xpBool", "")]
 
 -- | Apply a bijection before pickling / after unpickling
 xpWrap :: (a -> b) -> (b -> a) -> PU t a -> PU t b
-xpWrap to from xp = PU { hints = [("xpWrap","")]
-                       , unpickleTree = \x -> to <$> subPickler xp x
+xpWrap to from xp = ("xpWrap","") <?+>
+                    pu { unpickleTree = \x -> to <$> unpickleTree xp x
                        , pickleTree = pickleTree xp . from
                        }
 
@@ -499,7 +502,7 @@ xpWrapMaybe a2b b2a pua = ("xpWrapMaybe","") <?>
 xpWrapMaybe_ :: String -> (a -> Maybe b) -> ( b -> a) -> PU t a -> PU t b
 xpWrapMaybe_ errorMsg a2b b2a pua =  PU {
         hints = [("xpWrapMaybe_","")]
-        , unpickleTree = \t -> case subPickler pua t of
+        , unpickleTree = \t -> case unpickleTree pua t of
             Result val rest ->
                 case a2b val of
                     Just val' -> Result val' rest
@@ -522,8 +525,8 @@ xpWrapMaybe_ errorMsg a2b b2a pua =  PU {
 -- in which @Just 5@ is encoded as @\<score value=\"5\"\/\>@ and @Nothing@
 -- as @\<score\/\>@.
 xpOption :: PU [t] a -> PU [t] (Maybe a)
-xpOption pu = PU { hints = [("xpOption" ,"" )]
-                 , unpickleTree = doUnpickle
+xpOption pu = ("xpOption" ,"" ) <?+>
+              pu { unpickleTree = doUnpickle
                  , pickleTree = \mValue ->
                       case mValue of
                           Just value -> pickleTree pu value
@@ -531,15 +534,15 @@ xpOption pu = PU { hints = [("xpOption" ,"" )]
                  }
   where
     doUnpickle t =
-        case subPickler pu t of
+        case unpickleTree pu t of
             Result r t' -> Result (Just r) t'
             NoResult e -> Result Nothing (remList t)
             UnpickleError e -> UnpickleError e
 
 -- | return one element, untouched
 xpHead :: PU [a] a
-xpHead = PU { hints = [("xpHead","")]
-            , unpickleTree = \t -> case t of
+xpHead = ("xpHead","") <?+>
+         pu { unpickleTree = \t -> case t of
                    [] -> UnpickleError $ upe "No element remaining"
                    t:ts -> Result t (if null ts then Nothing else Just ts)
             , pickleTree = return
@@ -563,9 +566,9 @@ xpString = "xpString" <??> xpIso Text.unpack Text.pack
 -- N.B.: The predicate will only be tested while /unpickling/. When pickling,
 -- this is a noop.
 xpAssert :: Text -> (a -> Bool) -> PU t a -> PU t a
-xpAssert err p xp = PU { hints = [("xpAssert", err)]
-                       , unpickleTree = \t -> do
-                              r <- subPickler xp t
+xpAssert err p xp = ("xpAssert", err) <?+>
+                    pu { unpickleTree = \t -> do
+                              r <- unpickleTree xp t
                               unless (p r) $ UnpickleError assertErr
                               return r
                        , pickleTree = pickleTree xp
@@ -581,9 +584,8 @@ xpText = ("xpText","") <?> xpAssert "Input is empty" (not . Text.null) xpText0
 --
 -- /N.B./ Will error when the given pickler doesn't produce exactly one element
 xpRoot ::PU [a] b -> PU a b
-xpRoot pa = PU
-       { hints = [("xpRoot","")]
-       , unpickleTree = \t -> case subPickler pa [t] of
+xpRoot pa = ("xpRoot","") <?+>
+    pu { unpickleTree = \t -> case unpickleTree pa [t] of
               Result x Nothing -> Result x Nothing
               Result x (Just _) -> UnpickleError $ upe "Leftover entities"
               UnpickleError e -> UnpickleError e
@@ -601,15 +603,14 @@ getFirst p (x:xs) = case p x of
 
 -- | pickle to/from attribute
 xpAttribute :: Name -> PU Text a -> PU [Attribute] a
-xpAttribute name pu =  PU
-        { hints = [("xpAttr" , Text.pack $ ppName name)]
-        , unpickleTree = doUnpickle
+xpAttribute name pu =  ("xpAttr" , Text.pack $ ppName name) <?+>
+     pu { unpickleTree = doUnpickle
         , pickleTree = \value -> [(name, [ContentText $ pickleTree pu value])]
         }
   where
     doUnpickle attrs = case getFirst ((== name) . fst) attrs of
       Nothing -> NoResult $ Text.pack $ ppName name
-      Just ((_,[ContentText x]), rem) -> case subPickler pu x of
+      Just ((_,[ContentText x]), rem) -> case unpickleTree pu x of
         NoResult e -> missingE $ Text.unpack e
         UnpickleError e -> UnpickleError e
         Result _ (Just e) -> leftoverE $ show e
@@ -663,9 +664,8 @@ xpElem :: Name -- ^ name of the Element
           -> PU [Attribute] a -- ^ pickler for attributes
           -> PU [Node] n  -- ^ pickler for child nodes
           -> PU [Node] (a,n)
-xpElem name attrP nodeP =  PU
-         { hints = [tr]
-         , unpickleTree = doUnpickleTree
+xpElem name attrP nodeP =  tr <?+>
+      pu { unpickleTree = doUnpickleTree
          , pickleTree   = \(a,n) -> [NodeElement $ Element name
                                      (pickleTree attrP a)
                                      (pickleTree nodeP n)
@@ -701,8 +701,8 @@ xpElems name attrs children = tr <?-> xpSubsetAll isThisElem
 -- | Tries to apply the pickler to all the remaining elements;
 -- fails if any of them don't match
 xpAll :: PU [a] b -> PU [a] [b]
-xpAll xp = PU { hints = [("xpAll", "")]
-              , unpickleTree = doUnpickleTree
+xpAll xp = ("xpAll", "") <?+>
+           pu { unpickleTree = doUnpickleTree
               , pickleTree = \xs -> concatMap (pickleTree xp) xs
               } where
   doUnpickleTree xs = mapM (child' xp . return) xs
@@ -714,8 +714,8 @@ xpAll xp = PU { hints = [("xpAll", "")]
 xpSubsetAll :: (a -> Bool) -- ^ predicate to select the subset
             -> PU [a] b    -- ^ pickler to apply on the subset
             -> PU [a] [b]
-xpSubsetAll pred xp = PU { hints = [("xpSubsetAll","")]
-                         , unpickleTree = \t ->
+xpSubsetAll pred xp = ("xpSubsetAll","") <?+>
+                      pu { unpickleTree = \t ->
                             let (targets, rest) = partition pred t in
                             do
                                 leftover $ remList rest
@@ -742,9 +742,8 @@ xpAllByNamespace namespace xp = ("xpAllByNamespace",namespace)
 xpElemWithName :: PU [Attribute] a  -- ^ pickler for attributes
                   -> PU [Node] n    -- ^ pickler for child nodes
                   -> PU [Node] (Name,a,n)
-xpElemWithName attrP nodeP =  PU
-         { hints = [("xpElemWithName", "")]
-         , unpickleTree = doUnpickleTree
+xpElemWithName attrP nodeP =  ("xpElemWithName", "") <?+>
+      pu { unpickleTree = doUnpickleTree
          , pickleTree   = \(name, a,n) -> [NodeElement $ Element name
                                      (pickleTree attrP a)
                                      (pickleTree nodeP n)
@@ -766,9 +765,8 @@ xpElemByNamespace :: Text -- ^ Namespace
                   -> PU [Attribute] a  -- ^ pickler for attributes
                   -> PU [Node] n    -- ^ pickler for child nodes
                   -> PU [Node] (name,a,n)
-xpElemByNamespace ns nameP attrP nodeP = PU
-         { hints = [("xpElemByNamespace", ns)]
-         , unpickleTree = doUnpickleTree
+xpElemByNamespace ns nameP attrP nodeP = ("xpElemByNamespace", ns) <?+>
+      pu { unpickleTree = doUnpickleTree
          , pickleTree   = \(name, a,n) -> [NodeElement $ Element
                                      (Name (pickleTree nameP name) (Just ns) Nothing)
                                      (pickleTree attrP a)
@@ -799,9 +797,8 @@ xpElemByNamespace ns nameP attrP nodeP = PU
 --
 -- Unpickler wraps element in 'NodeElement'
 xpElemVerbatim ::  PU [Node] Element
-xpElemVerbatim = PU
-         { hints = [("xpElemVerbatim", "")]
-         , unpickleTree = doUnpickleTree
+xpElemVerbatim = ("xpElemVerbatim", "") <?+>
+      pu { unpickleTree = doUnpickleTree
          , pickleTree   = \e -> [NodeElement e]
          } where
     doUnpickleTree nodes = case getFirst nodeElementHelper nodes of
@@ -845,9 +842,8 @@ xpElemExists name = ("xpElemBlank", "") <?-->
 
 -- | Get the first non-element NodeContent from a node
 xpContent :: PU Text a -> PU [Node] a
-xpContent xp = PU
-       { hints = [("xpContent","")]
-       , unpickleTree = doUnpickle
+xpContent xp = ("xpContent","") <?+>
+    pu { unpickleTree = doUnpickle
        , pickleTree = return . NodeContent . ContentText . pickleTree xp
        } where
      doUnpickle nodes = case getFirst nodeContentHelper nodes of -- flatten
@@ -863,13 +859,12 @@ xpContent xp = PU
 -- | Unlift a pickler on Nodes to a Pickler on Elements. Nodes generated during
 -- pickling that are not Elements will be silently discarded
 xpUnliftElems :: PU [Node] a -> PU [Element] a
-xpUnliftElems xp = PU
-             { hints = [("xpUnliftElems","")]
-             , unpickleTree = doUnpickle
+xpUnliftElems xp = ("xpUnliftElems","") <?+>
+          pu { unpickleTree = doUnpickle
              , pickleTree = nodesToElems . pickleTree xp
              }
   where
-    doUnpickle nodes = case subPickler xp (map NodeElement nodes) of
+    doUnpickle nodes = case unpickleTree xp (map NodeElement nodes) of
         UnpickleError e -> UnpickleError e
         NoResult e -> NoResult e
         Result a r -> let r' = case r of
@@ -898,9 +893,9 @@ xpDefault df xp  = ("xpDefault", "") <?->
 --
 -- Unlike 'xpDefault', the default value /is/ encoded in the XML document.
 xpWithDefault :: a -> PU t a -> PU t a
-xpWithDefault a pa = PU { hints = [("xpWithDefault","" )]
-                        , pickleTree = pickleTree pa
-                        , unpickleTree = \v -> case subPickler pa v of
+xpWithDefault a pa = ("xpWithDefault","" ) <?+>
+                     pu { pickleTree = pickleTree pa
+                        , unpickleTree = \v -> case unpickleTree pa v of
                             Result r t -> Result r t
                             NoResult _ -> Result a (Just v)
                             UnpickleError e -> UnpickleError e
@@ -922,15 +917,15 @@ tErr tr = mapUnpickleError (("tuple", tr) <++>)
 
 -- | Combines 2 picklers
 xp2Tuple :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
-xp2Tuple xp1 xp2 = PU {hints = [("xp2Tuple", "")]
-                      , pickleTree = \(t1, t2) ->
+xp2Tuple xp1 xp2 = ("xp2Tuple", "") <?+>
+                 pu { pickleTree = \(t1, t2) ->
                           pickleTree xp1 t1 ++ pickleTree xp2 t2
-                      , unpickleTree = doUnpickleTree
+                    , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = do
     -- The /Either String/ monad
-    (x1 ,r1) <- tErr "1" . getRest $ subPickler xp1 r0
-    x2       <- tErr "2" $           subPickler xp2 r1
+    (x1 ,r1) <- tErr "1" . getRest $ unpickleTree xp1 r0
+    x2       <- tErr "2" $           unpickleTree xp2 r1
     return (x1,x2)
 
 
@@ -944,17 +939,17 @@ xpPair l r = ("xpPair", "") <?> xp2Tuple l r
 
 -- | Combines 3 picklers
 xp3Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
-xp3Tuple xp1 xp2 xp3 =  PU {hints = [("xp3Tuple", "")]
-                           , pickleTree = \(t1, t2, t3) ->
+xp3Tuple xp1 xp2 xp3 =  ("xp3Tuple", "") <?+>
+                        pu { pickleTree = \(t1, t2, t3) ->
                                  pickleTree xp1 t1
                                  ++ pickleTree xp2 t2
                                  ++ pickleTree xp3 t3
                            , unpickleTree = doUnpickleTree
                            } where
   doUnpickleTree r0 = do
-    (x1, r1) <- tErr "1" $ getRest $ subPickler xp1 r0
-    (x2, r2) <- tErr "2" $ getRest $ subPickler xp2 r1
-    x3       <- tErr "3" $           subPickler xp3 r2
+    (x1, r1) <- tErr "1" $ getRest $ unpickleTree xp1 r0
+    (x2, r2) <- tErr "2" $ getRest $ unpickleTree xp2 r1
+    x3       <- tErr "3" $           unpickleTree xp3 r2
     return (x1,x2,x3)
 
 -- | 'xp3Tuple' (/compat/)
@@ -965,8 +960,8 @@ xpTriple l m r = "xpTriple" <??> xp3Tuple l m r
 xp4Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4
              -> PU [a] (a1, a2, a3,a4)
 xp4Tuple xp1 xp2 xp3 xp4
-    = PU { hints = [("xp4Tuple", "")]
-         , pickleTree = \(t1, t2, t3, t4) ->
+    = ("xp4Tuple", "") <?+>
+                 pu { pickleTree = \(t1, t2, t3, t4) ->
                         pickleTree xp1 t1
                         ++ pickleTree xp2 t2
                         ++ pickleTree xp3 t3
@@ -974,18 +969,18 @@ xp4Tuple xp1 xp2 xp3 xp4
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 =  do
-    (x1 , r1) <- tErr "1" $ getRest $ subPickler xp1 r0
-    (x2 , r2) <- tErr "2" $ getRest $ subPickler xp2 r1
-    (x3 , r3) <- tErr "3" $ getRest $ subPickler xp3 r2
-    x4        <- tErr "4" $           subPickler xp4 r3
+    (x1 , r1) <- tErr "1" $ getRest $ unpickleTree xp1 r0
+    (x2 , r2) <- tErr "2" $ getRest $ unpickleTree xp2 r1
+    (x3 , r3) <- tErr "3" $ getRest $ unpickleTree xp3 r2
+    x4        <- tErr "4" $           unpickleTree xp4 r3
     return (x1,x2,x3,x4)
 
 -- | Combines 5 picklers
 xp5Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] (a1, a2, a3, a4, a5)
 xp5Tuple xp1 xp2 xp3 xp4 xp5
-  = PU { hints = [("xp5Tuple", "")]
-       , pickleTree = \(t1, t2, t3, t4, t5) ->
+  = ("xp5Tuple", "") <?+>
+                 pu { pickleTree = \(t1, t2, t3, t4, t5) ->
                         pickleTree xp1 t1
                         ++ pickleTree xp2 t2
                         ++ pickleTree xp3 t3
@@ -994,11 +989,11 @@ xp5Tuple xp1 xp2 xp3 xp4 xp5
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = do
-    (x1 , r1) <- tErr "1" $ getRest $ subPickler xp1 r0
-    (x2 , r2) <- tErr "2" $ getRest $ subPickler xp2 r1
-    (x3 , r3) <- tErr "3" $ getRest $ subPickler xp3 r2
-    (x4 , r4) <- tErr "4" $ getRest $ subPickler xp4 r3
-    x5        <- tErr "5" $           subPickler xp5 r4
+    (x1 , r1) <- tErr "1" $ getRest $ unpickleTree xp1 r0
+    (x2 , r2) <- tErr "2" $ getRest $ unpickleTree xp2 r1
+    (x3 , r3) <- tErr "3" $ getRest $ unpickleTree xp3 r2
+    (x4 , r4) <- tErr "4" $ getRest $ unpickleTree xp4 r3
+    x5        <- tErr "5" $           unpickleTree xp5 r4
     return (x1,x2,x3,x4,x5)
 
 -- | You guessed it ... Combines 6 picklers
@@ -1006,8 +1001,8 @@ xp6Tuple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] a6
              -> PU [a] (a1, a2, a3, a4, a5, a6)
 xp6Tuple xp1 xp2 xp3 xp4 xp5 xp6
-  = PU { hints = [("xp6Tuple", "")]
-       , pickleTree = \(t1, t2, t3, t4, t5, t6) ->
+  = ("xp6Tuple", "") <?+>
+                 pu { pickleTree = \(t1, t2, t3, t4, t5, t6) ->
                         pickleTree xp1 t1
                         ++ pickleTree xp2 t2
                         ++ pickleTree xp3 t3
@@ -1017,20 +1012,20 @@ xp6Tuple xp1 xp2 xp3 xp4 xp5 xp6
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = do
-    (x1 , r1) <- tErr "1" $ getRest $ subPickler xp1 r0
-    (x2 , r2) <- tErr "2" $ getRest $ subPickler xp2 r1
-    (x3 , r3) <- tErr "3" $ getRest $ subPickler xp3 r2
-    (x4 , r4) <- tErr "4" $ getRest $ subPickler xp4 r3
-    (x5 , r5) <- tErr "5" $ getRest $ subPickler xp5 r4
-    x6        <- tErr "6" $           subPickler xp6 r5
+    (x1 , r1) <- tErr "1" $ getRest $ unpickleTree xp1 r0
+    (x2 , r2) <- tErr "2" $ getRest $ unpickleTree xp2 r1
+    (x3 , r3) <- tErr "3" $ getRest $ unpickleTree xp3 r2
+    (x4 , r4) <- tErr "4" $ getRest $ unpickleTree xp4 r3
+    (x5 , r5) <- tErr "5" $ getRest $ unpickleTree xp5 r4
+    x6        <- tErr "6" $           unpickleTree xp6 r5
     return (x1,x2,x3,x4,x5,x6)
 
 -- | When unpickling, don't consume the matched element(s), noop when pickling
 xpPeek :: PU t a -> PU t a
-xpPeek xp = PU { hints = [("xpPeek", "")]
-               , pickleTree = pickleTree xp
+xpPeek xp = ("xpPeek", "") <?+>
+            pu { pickleTree = pickleTree xp
                , unpickleTree = \xs ->
-                  case subPickler xp xs of
+                  case unpickleTree xp xs of
                     Result r _ -> Result r (Just xs)
                     x          -> x
                }
@@ -1039,11 +1034,11 @@ xpPeek xp = PU { hints = [("xpPeek", "")]
 --
 -- When unpickling, only give access to the first element
 xpIsolate :: PU [t] a -> PU [t] a
-xpIsolate xp = PU { hints = [("xpIsolate","")]
-                  , pickleTree = pickleTree xp
+xpIsolate xp = ("xpIsolate","") <?+>
+               pu { pickleTree = pickleTree xp
                   , unpickleTree = \xs -> case xs of
                       [] -> NoResult "entity"
-                      (x:xs) -> case subPickler xp [x] of
+                      (x:xs) -> case unpickleTree xp [x] of
                           Result r t -> Result r (remList $ mbToList t ++ xs)
                           NoResult e -> missingE $ Text.unpack e
                           x          -> x
@@ -1060,8 +1055,8 @@ xpIsolate xp = PU { hints = [("xpIsolate","")]
 --
 -- When pickling, this is a noop
 xpFindFirst :: (t -> Bool) -> PU [t] a -> PU [t] a
-xpFindFirst p xp = PU { hints = [("xpFindFirst","")]
-                      , pickleTree = pickleTree xp
+xpFindFirst p xp = ("xpFindFirst","") <?+>
+                   pu { pickleTree = pickleTree xp
                       , unpickleTree = \xs -> case break p xs of
                           (_, []) -> NoResult "entity"
                           (xs,y:ys) -> do
@@ -1076,8 +1071,8 @@ xpConst c xp = ("xpConst" ,"") <?> xpWrap (const c) (const ()) xp
 -- | Convert text to/from any type that implements 'Read' and 'Show'.
 -- Fails on unpickle if 'read' fails.
 xpPrim :: (Show a, Read a) => PU Text a
-xpPrim = PU { hints = [("xpPrim", "")]
-            , unpickleTree = \x -> case reads $ Text.unpack x of
+xpPrim = ("xpPrim", "") <?+>
+         pu { unpickleTree = \x -> case reads $ Text.unpack x of
                    []       -> UnpickleError $
                                  upe ("Couldn't read " ++ show x ++ ".")
                    (r,rest):_  -> Result r (Text.pack <$> remList rest)
@@ -1087,13 +1082,13 @@ xpPrim = PU { hints = [("xpPrim", "")]
 -- | When unpickling, tries to apply the pickler to all elements
 -- returning and consuming only matched elements
 xpFindMatches :: PU [b] a -> PU [b] [a]
-xpFindMatches xp = PU { hints = [("xpFIndMatches", "")]
-                      , unpickleTree = doUnpickleTree
+xpFindMatches xp = ("xpFIndMatches", "") <?+>
+                   pu { unpickleTree = doUnpickleTree
                       , pickleTree = \xs -> pickleTree xp =<< xs
                       } where
   doUnpickleTree xs =
     let (ls, rs) = partitionEithers . for xs $ \x ->
-          case subPickler xp [x] of
+          case unpickleTree xp [x] of
             NoResult _ -> Left x
             Result r Nothing -> Right $ Result r Nothing
             Result r (Just _) -> Right $ leftoverE ""
@@ -1126,7 +1121,7 @@ xpSeqWhile pu = PU {
   where
     doUnpickle [] = Result [] Nothing
     doUnpickle es@(elt:rem) =
-                case subPickler pu [elt] of
+                case unpickleTree pu [elt] of
                     Result val _ -> case doUnpickle rem of
                                       Result xs r -> Result (val:xs) r
                                       e           -> e
@@ -1164,7 +1159,7 @@ xpMap en an xpk xpv
 xpWrapEither :: Show e => (a -> Either e b) -> (b -> a) -> PU t a -> PU t b
 xpWrapEither a2b b2a pua = PU {
     hints = [("xpWrapEither","")]
-    , unpickleTree = \t -> case subPickler pua t of
+    , unpickleTree = \t -> case unpickleTree pua t of
             Result val rest -> case a2b val of
                 Left e -> UnpickleError . upe  $ "Function returned Left "
                                                  ++ show e
@@ -1186,15 +1181,15 @@ xpAlt :: (a -> Int)  -- ^ selector function
       -> [PU t a]    -- ^ list of picklers
       -> PU t a
 xpAlt selector picklers =
-    PU { hints = [("xpAlt", "")]
-       , unpickleTree = doUnpickle
-       , pickleTree = \value -> pickleTree (picklers !! (selector value)) value
-    }
+    ("xpAlt", "") <?+>
+   pu { unpickleTree = doUnpickle
+      , pickleTree = \value -> pickleTree (picklers !! (selector value)) value
+      }
   where
     eitherResult (Result r t) = Right (Result r t)
     eitherResult (UnpickleError e) = Left $ e
     eitherResult (NoResult e) = Left . missing $ Text.unpack e
-    splitResults v = partitionEithers $ map (eitherResult . flip subPickler v)
+    splitResults v = partitionEithers $ map (eitherResult . flip unpickleTree v)
                                      picklers
     doUnpickle v = case splitResults v of
         (_, (Result r t):_) -> Result r t
@@ -1213,9 +1208,9 @@ xpEither xpl xpr = PU {
           Right r -> pickleTree xpr r
     }
   where
-    doUnpickle t = case subPickler xpl t of
+    doUnpickle t = case unpickleTree xpl t of
                     Result r t -> Result (Left r) t
-                    NoResult e1 -> case subPickler xpr t of
+                    NoResult e1 -> case unpickleTree xpr t of
                       Result r t -> Result (Right r) t
                       NoResult e2 -> UnpickleError $ ("xpEither","")
                                         <++> Variants [ missing $ Text.unpack e1
@@ -1229,16 +1224,15 @@ xpEither xpl xpr = PU {
 -- | pickler that during pickling always uses the first pickler, and during
 -- unpickling tries the first, and on failure then tries the second.
 xpTryCatch :: PU t a -> PU t a -> PU t a
-xpTryCatch pu1 pu2 = PU
-    { hints = [("xpTryCatch", "")]
-    , unpickleTree = \t -> case subPickler pu1 t of
+xpTryCatch pu1 pu2 = ("xpTryCatch", "") <?+>
+ pu { unpickleTree = \t -> case unpickleTree pu1 t of
              Result val1 rest -> Result val1 rest
-             NoResult e1 -> case subPickler pu2 t of
+             NoResult e1 -> case unpickleTree pu2 t of
                  Result val2 rest -> Result val2 rest
                  NoResult e2 -> NoResult $ Text.concat [e1, " / ", e2]
                  UnpickleError e2 -> UnpickleError $ ("xpTryCatch","Right")
                                     <++> e2
-             UnpickleError e1 -> case subPickler pu2 t of
+             UnpickleError e1 -> case unpickleTree pu2 t of
                  Result val2 rest -> Result val2 rest
                  NoResult e2 -> UnpickleError
                                 $ Variants [ e1
@@ -1260,11 +1254,10 @@ xpZero = ("xpZero","") <?> xpThrow "xpZero"
 xpThrow :: Monoid m
         => String    -- ^ Error message
         -> PU m a
-xpThrow msg = PU
-  { hints = [("xpThrow" , "")]
-  , unpickleTree = \t -> UnpickleError $ upe msg
-  , pickleTree = const mempty
-  }
+xpThrow msg = ("xpThrow" , "") <?+>
+             pu { unpickleTree = \t -> UnpickleError $ upe msg
+                , pickleTree = const mempty
+                }
 
 -- | Add an attribute with a fixed value.
 xpAddFixedAttr :: Name -> Text -> PU [Attribute] b -> PU [Attribute] b
@@ -1281,9 +1274,9 @@ xpSnd xp = "xpSnd" <??> xpWrap snd (\y -> (mempty, y)) xp
 
 -- | Instead of failing the pickler will return no result
 xpMayFail :: PU t a -> PU t a
-xpMayFail xp = PU { hints = [("xpMayFail", "")]
-                  , pickleTree = pickleTree xp
-                  , unpickleTree = \v -> case subPickler xp v of
+xpMayFail xp = ("xpMayFail", "") <?+>
+               pu { pickleTree = pickleTree xp
+                  , unpickleTree = \v -> case unpickleTree xp v of
                       UnpickleError _ -> NoResult "failed with xpMayFail"
                       x -> x
                   }
@@ -1292,8 +1285,8 @@ xpMayFail xp = PU { hints = [("xpMayFail", "")]
 --
 -- When pickling, this is a noop
 xpClean :: PU t a -> PU t a
-xpClean xp = PU { hints = [("xpClean", "")]
-                , unpickleTree = \x -> case subPickler xp x of
+xpClean xp = ("xpClean", "") <?+>
+             pu { unpickleTree = \x -> case unpickleTree xp x of
                      Result r _ -> Result r Nothing
                      e -> e
                 , pickleTree = pickleTree xp
@@ -1310,5 +1303,5 @@ instance Cat.Category PU where
                        Result _ (Just _) -> leftoverE ""
                        Result resg Nothing -> Result resg rem
                    NoResult e -> NoResult e
-                   UnpickleError e -> UnpickleError e
+                   UnpickleError e -> UnpickleError $ traceSteps (hints g) e
                }
