@@ -206,9 +206,12 @@ module Data.XML.Pickle (
   , (<++>)
   , (<?+>)
   , (<?>)
+  , (<??>)
   , UnresolvedEntityException(..)
   -- * helper functions
   , flattenContent
+  , tErr
+  , getRest
 )   where
 
 import Control.Applicative ((<$>))
