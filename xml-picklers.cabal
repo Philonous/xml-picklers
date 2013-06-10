@@ -30,7 +30,8 @@ Library
     , xml-types >= 0.3
     , text >= 0.11
     , containers >= 0.4
-  Exposed-Modules: Data.XML.Pickle
+    , template-haskell  
+  Exposed-Modules: Data.XML.Pickle, Data.XML.Pickle.Extra
   GHC-Options: -Wall
 
 Source-Repository head
