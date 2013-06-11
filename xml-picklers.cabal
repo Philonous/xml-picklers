@@ -31,6 +31,8 @@ Library
     , text >= 0.11
     , containers >= 0.4
   Exposed-Modules: Data.XML.Pickle
+  Other-Modules:   Data.XML.Pickle.Basic
+                 , Data.XML.Pickle.Tuples
   GHC-Options: -Wall
 
 Source-Repository head
