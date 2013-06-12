@@ -78,12 +78,12 @@
 -- > main = do
 -- >     print $ pickle (xpRoot $ xpElemNodes "people" $ xpAll xpPerson) people
 --
--- Program outputs would be an xml-value equivalent to:
+-- Program output would be an xml-value equivalent to:
 --
 -- > <people><person name="Dave" age="27">A fat thin man with long short hair</person>
 -- > <person name="Jane" age="21">Lives in a white house with green windows</person></people>
 --
--- Funktions marked with /compat/ are included for compatibility with hexpat-pickle
+-- Functions marked with /compat/ are included for compatibility with hexpat-pickle
 
 module Data.XML.Pickle (
   -- * Types
