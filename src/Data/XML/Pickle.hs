@@ -141,6 +141,7 @@ module Data.XML.Pickle (
   , xpWithDefault
   , xpMap
   , xpAlt
+  , xpChoice
   , xpEither
   , xpTryCatch
   -- ** sequencing
@@ -880,6 +881,10 @@ xpWrapEither a2b b2a pua = ("xpWrapEither","") <?+>
 --
 -- This is typically used to handle each constructor of a data type. However, it
 -- can be used wherever multiple serialization strategies apply to a single type.
+--
+-- /NB/ This function will ignore all errors as long as one of the branches
+-- returns a result. Also, it will produce an error when all branches return
+-- NoResult.  Use 'xpChoice' for a saner version of this function.
 xpAlt :: (a -> Int)  -- ^ selector function
       -> [PU t a]    -- ^ list of picklers
       -> PU t a
@@ -897,6 +902,34 @@ xpAlt selector picklers = PU {
         (_, Result r t:_) -> Result r t
         (es, []) -> ("xpAlt", "") <++.> UnpickleError (Variants es)
         _ -> error "xpAlt: splitResults returned impossible result"
+
+
+-- | Execute one of a list of picklers. The /selector function/ is used during
+-- pickling, and the integer returned is taken as a 0-based index to select a
+-- pickler from /pickler options/.  Unpickling is done by trying each list
+-- element in order until one returns a Result or an Error.
+--
+-- This is typically used to handle each constructor of a data type. However, it
+-- can be used wherever multiple serialization strategies apply to a single type.
+--
+-- This function is similar to 'xpAlt' but it will stop unpickling on the first
+-- error. It will return NoResult iff all of the picklers return NoResult (or
+-- the list of picklers is empty).
+xpChoice :: (a -> Int)  -- ^ selector function
+      -> [PU t a]    -- ^ list of picklers
+      -> PU t a
+xpChoice selector picklers =
+    PU { unpickleTree = go picklers (1 :: Integer)
+       , pickleTree = \value -> pickleTree (picklers !! selector value) value
+       }
+  where
+    go [] _ _ = NoResult "entity"
+    go (p:ps) i v = case unpickleTree p v of
+        r@Result{} -> r
+        UnpickleError e -> UnpickleError $ ("xpChoice", Text.pack $ show i)
+                                           <++> e
+        NoResult _ -> go ps (i+1) v
+
 
 -- | Try the left pickler first and if that doesn't produce anything the right
 -- one.  wrapping the result in Left or Right, respectively
