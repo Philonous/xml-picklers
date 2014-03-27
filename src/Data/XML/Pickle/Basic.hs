@@ -21,13 +21,14 @@ data PU t a = PU
 data UnpickleResult t a = UnpickleError UnpickleError
                         | NoResult Text -- ^ Not found, description of element
                         | Result a (Maybe t) -- ^ Result and remainder. The
-                                             -- remainder is wrapped in Maybe to
-                                             -- avoid a Monoid constraint on t.
+                                             -- remainder is wrapped in @Maybe@
+                                             -- to avoid a @Monoid@ constraint
+                                             -- on @t@
                                              --
-                                             --  /Invariant/: When t is a
-                                             -- Monoid, the empty remainder should
-                                             -- always be @Nothing@ instead of
-                                             -- @Just mempty@
+                                             --  /Invariant/: When @t@ is a
+                                             -- @Monoid@, the empty remainder
+                                             -- should always be @Nothing@
+                                             -- instead of @Just mempty@
                           deriving (Functor, Show)
 
 instance Monad (UnpickleResult t) where
@@ -115,7 +116,7 @@ infixl 6 <++.>
 (<++.>) s = mapUnpickleError (s <++>)
 
 infixr 0 <?>
--- | Override the last backtrace level in the error report
+-- | Override the last backtrace level in the error report.
 (<?>) :: (Text, Text) -> PU t a -> PU t a
 (<?>) tr = mapError (swapStack tr)
   where
@@ -131,7 +132,7 @@ infixr 0 <?>
 
 
 infixr 1 <?+>
--- | Add a back trace level to the error report
+-- | Add a back trace level to the error report.
 (<?+>) :: (Text, Text) -> PU t a -> PU t a
 (<?+>) tr = mapError (tr <++>)
 

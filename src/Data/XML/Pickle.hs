@@ -7,44 +7,47 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | This module provides XML picklers that plug into the xml tree of the
--- /xml-types/ package.
--- This module was \"inspired\" by hexpat-pickle.
+-- | This module provides XML picklers that plug into the XML tree of the
+-- /xml-types/ package. This module was \"inspired\" by /hexpat-pickle/.
 --
 -- The API differences between /hexpat-pickle/ and this module include:
 --
---  * When unpickling, picklers will /consume/ matching elmements so that they will be ignored by sucessive picklers.
---  To circumvent this behaviour, use @'xpPeek'@
+--  * When unpickling, picklers will /consume/ matching elmements so that they
+--    will be ignored by sucessive picklers. To circumvent this behaviour, use
+--    @'xpPeek'@
 --
---  * wrappers like 'xpWrap' are uncurried
+--  * Wrappers like 'xpWrap' are uncurried
 --
 --  * There are no lazy unpicklers
 --
---  * Most unpicklers will produce an error when their child unpicklers fail to consume all elements.
--- Use 'xpClean' to discard those elements
+--  * Most unpicklers will produce an error when their child unpicklers fail to
+--    consume all elements. Use 'xpClean' to discard those elements
 --
 -- The data type @'PU' t a@ represents both a pickler (converting Haskell data
--- to XML) and an unpickler (XML to Haskell data), so your code only needs to be
--- written once for both serialization and deserialization.  The 'PU' primitives, such
--- as 'xpElem' for XML elements, may be composed into complex arrangements using
--- 'xpPair' and other combinators.
+-- to XML) and an unpickler (XML to Haskell data), so your code only needs to
+-- be written once for both serialization and deserialization.  The 'PU'
+-- primitives, such as 'xpElem' for XML elements, may be composed into complex
+-- arrangements using 'xpPair' and other combinators.
 --
 -- Most picklers will try to find the /first match/ rather than failing when
--- the first element doesn't match. This is why the target type often ist
--- a list. To prevent this behaviour and commit the pickler to the first
--- element available, use 'xpIsolate'.
+-- the first element doesn't match. This is why the target type often is a
+-- list. To prevent this behaviour and commit the pickler to the first element
+-- available, use 'xpIsolate'.
 --
--- The top level of the document does not follow this rule, because it is a single
--- node type.  'xpRoot' is needed to adapt this to type ['Node'] for your
--- pickler to use.  You would typically define a pickler for a whole document with
--- 'xpElem', then pickle it to a single 'Node' with @'pickleTree' (xpRoot myDocPickler) value@.
+-- The top level of the document does not follow this rule, because it is a
+-- single node type. 'xpRoot' is needed to adapt this to type ['Node'] for your
+-- pickler to use.  You would typically define a pickler for a whole document
+-- with 'xpElem', then pickle it to a single 'Node' with @'pickleTree' (xpRoot
+-- myDocPickler) value@.
 --
--- /NB/: Unresolved entities are considered an error and will trigger an exception
+-- /NB/: Unresolved entities are considered an error and will trigger an
+-- exception
 --
--- When unpickling, the folowing invariant regarding the list of remaining elements should be observed:
+-- When unpickling, the following invariant regarding the list of remaining
+-- elements should be observed:
 --
--- * The returned list should be a subset of or the initial list itself, that is, no elements should be added
--- or changed
+-- * The returned list should be a subset of or the initial list itself, that
+--   is, no elements should be added or changed
 --
 -- * The relative order of elements should be preserved
 --
@@ -80,26 +83,33 @@
 --
 -- Program output would be an xml-value equivalent to:
 --
--- > <people><person name="Dave" age="27">A fat thin man with long short hair</person>
--- > <person name="Jane" age="21">Lives in a white house with green windows</person></people>
+-- > <people>
+-- >   <person name="Dave" age="27">
+-- >     A fat thin man with long short hair
+-- >   </person>
+-- >   <person name="Jane" age="21">
+-- >     Lives in a white house with green windows
+-- >  </person>
+-- > </people>
 --
--- Functions marked with /compat/ are included for compatibility with hexpat-pickle
+-- Functions marked with /compat/ are included for compatibility with
+-- /hexpat-pickle/.
 
 module Data.XML.Pickle (
   -- * Types
   PU(..)
   , Attribute
   , UnpickleResult(..)
-  -- * Pickler Invocation
+  -- * Pickler invocation
   , pickle
   , unpickle
-   -- * Primitive picklers
+  -- * Primitive picklers
   , xpUnit
   , xpZero
   , xpThrow
   , xpIso
   , xpPartial
-   -- * Value-preserving picklers
+  -- * Value-preserving picklers
   , xpId
   , xpFst
   , xpSnd
@@ -120,7 +130,7 @@ module Data.XML.Pickle (
   , xpAttrImplied
   , xpAttrFixed
   , xpAddFixedAttr
-   -- ** Elements
+  -- ** Elements
   , xpElem
   , xpElemWithName
   , xpElemByNamespace
@@ -131,11 +141,11 @@ module Data.XML.Pickle (
   , xpElemBlank
   , xpElemExists
   , xpElems
-   -- ** Character Content
+  -- ** Character Content
   , xpContent
   , xpBool
-   -- * Pickler combinators
-   -- ** choice
+  -- * Pickler combinators
+  -- ** Choice
   , xpOption
   , xpDefault
   , xpWithDefault
@@ -144,22 +154,20 @@ module Data.XML.Pickle (
   , xpChoice
   , xpEither
   , xpTryCatch
-  -- ** sequencing
-  -- |
-  -- /NB/ The sequencing operations /do not/ enforce any order on the
+  -- ** Sequencing
+  -- | /NB/: The sequencing operations /do not/ enforce any order on the
   -- matched elements unless stated otherwise, but you can commit individial
-  -- picklers to the next available element with 'xpIsolate'.
-  -- Applying @xpIsolate@ on all nested Picklers will in effect enforce order.
+  -- picklers to the next available element with 'xpIsolate'. Applying
+  -- @xpIsolate@ on all nested Picklers will in effect enforce order.
   --
   -- Howver, once a pickler consumes an element it will not be available to
   -- following picklers. You can circumvent this behaviour with 'xpPeek'.
   --
-  -- If you want ensure that all elements are consumed after the last pickler is
-  -- run you may want to use 'xpClean'
-
+  -- If you want ensure that all elements are consumed after the last pickler
+  -- is run you may want to use 'xpClean'.
+  --
   -- *** Lists
-  -- |
-  -- The List pickler combinators will pickle lists in the given order
+  -- | The List pickler combinators will pickle lists in the given order
   -- without any special treatment and unpickle as stated.
   , xpFindMatches
   , xpFindFirst
@@ -182,7 +190,7 @@ module Data.XML.Pickle (
   , xp5Tuple
   , xp6Tuple
   -- ** Wrappers
-  -- *** value wrappers
+  -- *** Value wrappers
   , xpWrap
   , xpConst
   , xpWrapEither
@@ -191,16 +199,14 @@ module Data.XML.Pickle (
   , xpAssert
   , xpMayFail
   , xpUnliftElems
-  -- *** Book keeping
+  -- *** Bookkeeping
   -- | Change the semantics of picklers
   , xpIsolate
   , xpPeek
   -- *** Cleannes
-  -- |
-  -- Picklers keep track of elements left over after unpickling,
-  -- so the may be
-  --
-  -- [@clean@] an unpickling is considered @clean@ when it doesn't leave any remainng elements
+  -- | Picklers keep track of elements left over after unpickling, so the may
+  -- be [@clean@] an unpickling is considered @clean@ when it doesn't leave any
+  -- remainng elements.
   , xpClean
   -- * Error handling
   , UnpickleError(..)
@@ -210,7 +216,7 @@ module Data.XML.Pickle (
   , (<?>)
   , (<??>)
   , UnresolvedEntityException(..)
-  -- * helper functions
+  -- * Helper functions
   , flattenContent
   , tErr
   , getRest
@@ -233,24 +239,23 @@ import Data.XML.Types
 import Data.XML.Pickle.Tuples
 import Data.XML.Pickle.Basic
 
--- | pickle a Tree
+-- | Pickle a tree.
 pickle :: PU t a -> a -> t
 pickle = pickleTree
 
--- | unpickle a tree
+-- | Unpickle a tree.
 unpickle :: PU t a -> t -> Either UnpickleError a
 unpickle xp x = case unpickleTree xp x of
     UnpickleError e -> Left e
     NoResult e -> Left . ErrorMessage $ "Entity not found " `Text.append` e
     Result r _ -> Right r
 
-
 for :: [a] -> (a -> b) -> [b]
 for = flip map
 
 type Attribute = (Name,[Content])
 
--- | Isomorphic pickler
+-- | Isomorphic pickler.
 xpIso :: (a -> b) -> (b -> a) -> PU a b
 xpIso f g = PU (\t -> Result (f t) Nothing) g
 
@@ -264,7 +269,7 @@ xpPartial f g = ("xpEither", "") <?+>
                       Right r -> Result r Nothing
                   }
 
--- | Doesn't create or consume anything, always succeeds
+-- | Doesn't create or consume anything, always succeeds.
 xpUnit :: PU [a] ()
 xpUnit = PU (Result () . remList) (const [])
 
@@ -273,19 +278,20 @@ xpUnit = PU (Result () . remList) (const [])
 xpId :: PU a a
 xpId = xpIso id id
 
--- | 'xpId' (/compat/)
+-- | 'xpId'. (/compat/)
 xpTrees :: PU a a
 xpTrees = xpId
 
 -- | Converts Booleans to XML boolean values
 --
--- * true and 1 are read as True
+-- * \"true\" and \"1\" are read as @True@
 --
--- * false and 0 are read as False
+-- * \"false\" and \"0\" are read as @False@
 --
--- * all other values generate an unpickle error
+-- * All other values generate an unpickle error
 --
--- Will always generate true or false (not 0 or 1) when pickling
+-- Will always generate \"true\" or \"false\" (not \"0\" or \"1\") when
+-- pickling.
 xpBool :: PU Text Bool
 xpBool = ("xpBool" ,"") <?+> PU
           { unpickleTree =
@@ -303,20 +309,21 @@ xpBool = ("xpBool" ,"") <?+> PU
                      False -> "false"
           }
 
--- | Apply a bijection before pickling / after unpickling
+-- | Apply a bijection before pickling / after unpickling.
 xpWrap :: (a -> b) -> (b -> a) -> PU t a -> PU t b
 xpWrap to from xp = ("xpWrap","") <?+>
                     PU { unpickleTree = \x -> to <$> unpickleTree xp x
                        , pickleTree = pickleTree xp . from
                        }
 
--- | Like xpWrap, but strips Just (and treats Nothing as a failure) during unpickling.
+-- | Like xpWrap, but strips @Just@ (and treats @Nothing@ as a failure) during
+-- unpickling.
 xpWrapMaybe :: (a -> Maybe b) -> (b -> a) -> PU t a -> PU t b
 xpWrapMaybe a2b b2a pua = ("xpWrapMaybe","") <?>
                  xpWrapMaybe_ "xpWrapMaybe can't encode Nothing" a2b b2a pua
 
--- | Like xpWrap, but strips Just (and treats Nothing as a failure) during unpickling,
--- with specified error message for Nothing value.
+-- | Like xpWrap, but strips @Just@ (and treats @Nothing@ as a failure) during
+-- unpickling, with specified error message for @Nothing@ value.
 xpWrapMaybe_ :: String -> (a -> Maybe b) -> ( b -> a) -> PU t a -> PU t b
 xpWrapMaybe_ errorMsg a2b b2a pua = ("xpWrapMaybe_","") <?+> PU {
         unpickleTree = \t -> case unpickleTree pua t of
@@ -329,11 +336,9 @@ xpWrapMaybe_ errorMsg a2b b2a pua = ("xpWrapMaybe_","") <?+> PU {
         , pickleTree = pickleTree pua  . b2a
     }
 
-
--- | Lift a pickler. Nothing is returned when the given pickler
--- doesn't return a value (e.g. the element isn't found). Does not affect
--- unpickling errors.
--- Nothing is pickled to mempty
+-- | Lift a pickler. Nothing is returned when the given pickler doesn't return
+-- a value (e.g. the element isn't found). Does not affect unpickling errors.
+-- @Nothing@ is pickled to @mempty@.
 --
 -- A typical example is:
 --
@@ -355,7 +360,7 @@ xpOption pu = PU { unpickleTree = doUnpickle
             NoResult _e -> Result Nothing (remList t)
             UnpickleError e -> UnpickleError e
 
--- | return one element, untouched
+-- | Return one element, untouched.
 xpHead :: PU [a] a
 xpHead = PU {unpickleTree = \t' -> case t' of
                 [] -> UnpickleError $ ("xpHead","")
@@ -364,22 +369,22 @@ xpHead = PU {unpickleTree = \t' -> case t' of
             , pickleTree = return
             }
 
--- | 'xpHead' (/compat/)
+-- | 'xpHead'. (/compat/)
 xpTree :: PU [a] a
 xpTree = xpHead
 
--- | specialised version of 'xpId' (/compat/)
+-- | Specialised version of 'xpId'. (/compat/)
 xpText0 :: PU Text Text
 xpText0 = xpId
 
--- | Convert text to/from String
+-- | Convert @Text@ to/from @String@.
 xpString :: PU Text String
 xpString = ("xpString", "") <?> xpIso Text.unpack Text.pack
 
 -- | Test predicate when unpickling. Fails with given error message when the
 -- predicate return false.
 --
--- N.B.: The predicate will only be tested while /unpickling/. When pickling,
+-- /NB/: The predicate will only be tested while /unpickling/. When pickling,
 -- this is a noop.
 xpAssert :: Text -> (a -> Bool) -> PU t a -> PU t a
 xpAssert err p xp = ("xpAssert",err) <?+>
@@ -396,9 +401,10 @@ xpAssert err p xp = ("xpAssert",err) <?+>
 xpText :: PU Text Text
 xpText = ("xpText","") <?> xpAssert "Input is empty" (not . Text.null) xpText0
 
--- | Transforms a pickler on Lists to a pickler on single elements.
+-- | Transforms a pickler on lists to a pickler on single elements.
 --
--- /N.B./ Will error when the given pickler doesn't produce exactly one element
+-- /NB/: Will error when the given pickler doesn't produce exactly one
+-- element.
 xpRoot ::PU [a] b -> PU a b
 xpRoot pa = ("xpRoot","") <?+> PU
        { unpickleTree = \t -> case unpickleTree pa [t] of
@@ -417,8 +423,7 @@ getFirst p (x:xs) = case p x of
       True  -> Just (x,xs)
       False -> second (x:) <$> getFirst p xs
 
-
--- | pickle to/from attribute
+-- | Pickle to/from attribute.
 xpAttribute :: Name -> PU Text a -> PU [Attribute] a
 xpAttribute name pu = ("xpAttr" , Text.pack $ ppName name) <?+> PU
         { unpickleTree = doUnpickle
@@ -427,41 +432,51 @@ xpAttribute name pu = ("xpAttr" , Text.pack $ ppName name) <?+> PU
   where
     doUnpickle attrs = case getFirst ((== name) . fst) attrs of
       Nothing -> NoResult $ Text.pack $ ppName name
-      Just ((_,[ContentText x]), rem') -> case unpickleTree pu x of
-        NoResult e -> missingE $ Text.unpack e
-        UnpickleError e -> UnpickleError e
-        Result _ (Just e) -> leftoverE $ show e
-        Result r Nothing  -> Result r (remList rem')
-      _ -> UnpickleError $ upe ("Unresolved entities in " ++ ppName name ++ ".")
+      Just ((_, c), rem')
+        | all isContentText c -> case unpickleTree pu (contentToText c) of
+          NoResult e -> missingE $ Text.unpack e
+          UnpickleError e -> UnpickleError e
+          Result _ (Just e) -> leftoverE $ show e
+          Result r Nothing  -> Result r (remList rem')
+        -- Content entities are not supported.
+        | otherwise -> UnpickleError $
+                       upe ("Unresolved entities in " ++ ppName name ++ ".")
+    contentToText = Text.concat . map contentToText_
+    contentToText_ (ContentText t) = t
+    contentToText_ (ContentEntity t) = t
+    isContentText (ContentText _) = True
+    isContentText (ContentEntity _) = False
 
--- | (/compat/)
+-- | 'xpAttribute' (/compat/)
 xpAttr :: Name -> PU Text a -> PU [Attribute] a
 xpAttr = xpAttribute
 
--- | Pickle attribute if Just is given, on unpickling return Just <val> when
--- the attribute is found, Nothing otherwise
+-- | Pickle attribute if @Just@ is given, on unpickling return @Just <val>@
+-- when the attribute is found, @Nothing@ otherwise.
 xpAttribute' :: Name -> PU Text a -> PU [Attribute] (Maybe a)
 xpAttribute' name pu = xpOption $ xpAttr name pu
 
 xpAttrImplied :: Name -> PU Text a -> PU [Attribute] (Maybe a)
 xpAttrImplied = xpAttribute'
 
--- | Pickle an attribute with the specified name and value, fail if the same attribute is
--- not present on unpickle.
+-- | Pickle an attribute with the specified name and value, fail if the same
+-- attribute is not present on unpickle.
 xpAttribute_ :: Name -> Text -> PU [Attribute] ()
 xpAttribute_ name val =
     xpWrapMaybe_ ("expected fixed attribute "++ ppName name++"="++show val)
                 (\v -> if v == val then Just () else Nothing) (const val) $
     xpAttr name xpId
 
+-- | 'xpAttribute_' (/compat/)
 xpAttrFixed :: Name -> Text -> PU [Attribute] ()
 xpAttrFixed = xpAttribute_
 
--- merge successive NodeCotents
+-- | Merge successive @NodeContent@ values.
 flattenContent :: [Node] -> [Node]
 flattenContent xs = case foldr (\x (buf, res) -> case x of
                          NodeContent (ContentText txt)
                            -> (txt : buf, res)
+                         NodeComment _ -> (buf, res)
                          e@(NodeElement _)
                            -> ([] , e : addConcatText buf res)
                          _ -> throw UnresolvedEntityException
@@ -477,9 +492,9 @@ flattenContent xs = case foldr (\x (buf, res) -> case x of
 -- | When unpickling, tries to find the first element with the supplied name.
 -- Once such an element is found, it will commit to it and /fail/ if any of the
 -- picklers don't match.
-xpElem :: Name -- ^ name of the Element
-          -> PU [Attribute] a -- ^ pickler for attributes
-          -> PU [Node] n  -- ^ pickler for child nodes
+xpElem :: Name -- ^ Name of the 'Element'
+          -> PU [Attribute] a -- ^ Pickler for attributes
+          -> PU [Node] n  -- ^ Pickler for child nodes
           -> PU [Node] (a,n)
 xpElem name attrP nodeP = tr <?+> PU
          { unpickleTree = doUnpickleTree
@@ -503,9 +518,9 @@ xpElem name attrP nodeP = tr <?+> PU
 
 -- | Handle all elements with a given name. The unpickler will fail when any of
 -- the elements fails to unpickle.
-xpElems :: Name -- ^ Name of the elements
-        -> PU [Attribute] a -- ^ pickler for attributes
-        -> PU [Node] n -- ^ pickler for child nodes
+xpElems :: Name -- ^ Name of the 'Element' values
+        -> PU [Attribute] a -- ^ Pickler for attributes
+        -> PU [Node] n -- ^ Pickler for child nodes
         -> PU [Node] [(a, n)]
 xpElems name attrs children = tr <?> xpSubsetAll isThisElem
                                        (xpElem name attrs children)
@@ -515,8 +530,8 @@ xpElems name attrs children = tr <?> xpSubsetAll isThisElem
 
     tr = ("xpElems", Text.pack $ ppName name)
 
--- | Tries to apply the pickler to all the remaining elements;
--- fails if any of them don't match
+-- | Tries to apply the pickler to all the remaining elements; fails if any of
+-- them don't match.
 xpAll :: PU [a] b -> PU [a] [b]
 xpAll xp = ("xpAll", "") <?+> PU { unpickleTree = doUnpickleTree
                                  , pickleTree = concatMap (pickleTree xp)
@@ -524,11 +539,11 @@ xpAll xp = ("xpAll", "") <?+> PU { unpickleTree = doUnpickleTree
   doUnpickleTree = mapM (child' xp . return)
 
 -- | For unpickling, apply the given pickler to a subset of the elements
--- determined by a given predicate
+-- determined by a given predicate.
 --
--- Pickles like 'xpAll'
-xpSubsetAll :: (a -> Bool) -- ^ predicate to select the subset
-            -> PU [a] b    -- ^ pickler to apply on the subset
+-- Pickles like 'xpAll'.
+xpSubsetAll :: (a -> Bool) -- ^ Predicate to select the subset
+            -> PU [a] b    -- ^ Pickler to apply on the subset
             -> PU [a] [b]
 xpSubsetAll p xp = ("xpSubsetAll","") <?+> PU { unpickleTree = \t ->
                      let (targets, rest) = partition p t in
@@ -552,10 +567,10 @@ xpAllByNamespace namespace xp = ("xpAllByNamespace",namespace)
     helper _ = False
 
 
--- | pickle Element without restriction on the name.
--- the name as taken / returned as the first element of the triple
-xpElemWithName :: PU [Attribute] a  -- ^ pickler for attributes
-                  -> PU [Node] n    -- ^ pickler for child nodes
+-- | Pickle 'Element' without a restriction on the name. The name as taken /
+-- returned as the first element of the triple.
+xpElemWithName :: PU [Attribute] a  -- ^ Pickler for attributes
+                  -> PU [Node] n    -- ^ Pickler for child nodes
                   -> PU [Node] (Name,a,n)
 xpElemWithName attrP nodeP = ("xpElemWithName", "") <?+> PU
          { unpickleTree = doUnpickleTree
@@ -574,11 +589,11 @@ xpElemWithName attrP nodeP = ("xpElemWithName", "") <?+> PU
     nodeElementHelper (NodeElement Element{}) = True
     nodeElementHelper _ = False
 
--- | find element by name space, prefixes are ignored
+-- | Find element by name space, prefixes are ignored.
 xpElemByNamespace :: Text -- ^ Namespace
                   -> PU Text name -- ^ Pickler for the local name
-                  -> PU [Attribute] a  -- ^ pickler for attributes
-                  -> PU [Node] n    -- ^ pickler for child nodes
+                  -> PU [Attribute] a  -- ^ Pickler for attributes
+                  -> PU [Node] n    -- ^ Pickler for child nodes
                   -> PU [Node] (name,a,n)
 xpElemByNamespace ns nameP attrP nodeP = PU
          { unpickleTree = doUnpickleTree
@@ -610,9 +625,9 @@ xpElemByNamespace ns nameP attrP nodeP = PU
     nodeElementNSHelper ns' (NodeElement (Element n _ _)) = nameNamespace n == Just ns'
     nodeElementNSHelper _ns _ = False
 
--- | Pickler Returns the first found Element untouched
+-- | Pickler returns the first found 'Element' untouched.
 --
--- Unpickler wraps element in 'NodeElement'
+-- Unpickler wraps element in 'NodeElement'.
 xpElemVerbatim ::  PU [Node] Element
 xpElemVerbatim = PU
          { unpickleTree = doUnpickleTree
@@ -625,29 +640,32 @@ xpElemVerbatim = PU
     nodeElementHelper (NodeElement Element{}) = True
     nodeElementHelper _ = False
 
--- | A helper variant of xpElem for elements that contain attributes but no child tags.
+-- | A helper variant of 'xpElem' for elements that contain attributes but no
+-- child tags.
 xpElemAttrs :: Name -> PU [Attribute] b -> PU [Node] b
 xpElemAttrs name puAttrs = xpWrap fst (\a -> (a,())) $
                              xpElem name puAttrs xpUnit
 
--- | A helper variant of xpElem for elements that contain child nodes but no attributes.
+-- | A helper variant of 'xpElem' for elements that contain child nodes but no
+-- attributes.
 xpElemNodes :: Name -> PU [Node] b -> PU [Node] b
 xpElemNodes name puChildren = xpWrap snd (\a -> ((),a)) $
                                 xpElem name xpUnit puChildren
 
--- | A helper variant of xpElem for elements that contain only character data
+-- | A helper variant of 'xpElem' for elements that contain only character
+-- data.
 xpElemText :: Name -> PU [Node] Text
 xpElemText name = xpElemNodes name $ xpContent xpId
 
--- | Helper for Elements that don't contain anything
+-- | Helper for 'Element' values that don't contain anything.
 xpElemBlank :: Name -> PU [Node] ()
 xpElemBlank name = ("xpElemBlank", "") <?> xpWrap (const () ) (const ((),())) $
                                 xpElem name xpUnit xpUnit
 
--- | When pickling, creates an empty element iff parameter is True
+-- | When pickling, creates an empty element iff parameter is @True@.
 --
 -- When unpickling, checks whether element exists. Generates an error when the
--- element is not empty
+-- element is not empty.
 xpElemExists :: Name -> PU [Node] Bool
 xpElemExists name = ("xpElemBlank", "") <?>
                     xpWrap (\x -> case x of Nothing -> False; Just _ -> True)
@@ -655,13 +673,16 @@ xpElemExists name = ("xpElemBlank", "") <?>
                            xpOption (xpElemBlank name)
 
 
--- | Get the first non-element NodeContent from a node
+-- | Get the first non-element 'NodeContent' from a node.
 xpContent :: PU Text a -> PU [Node] a
 xpContent xp = ("xpContent","") <?+> PU
        { unpickleTree = doUnpickle
        , pickleTree = return . NodeContent . ContentText . pickleTree xp
        } where
-     doUnpickle nodes = case getFirst nodeContentHelper nodes of -- flatten
+     doUnpickle nodes = case getFirst nodeContentHelper
+                               (filter (\node -> case node of
+                                           NodeComment _ -> False
+                                           _ -> True) nodes) of -- flatten
        Just (NodeContent (ContentText t), _re) -> child xp t
        Just (NodeContent (ContentEntity t), _) ->
            UnpickleError . upe $ "Unresolved entity" ++ show t ++ "."
@@ -671,8 +692,9 @@ xpContent xp = ("xpContent","") <?+> PU
      nodeContentHelper _ = False
 
 
--- | Unlift a pickler on Nodes to a Pickler on Elements. Nodes generated during
--- pickling that are not Elements will be silently discarded
+-- | Unlift a pickler on 'Node' values to a pickler on 'Element' values. Nodes
+-- generated during pickling that are not 'Element' values will be silently
+-- discarded.
 xpUnliftElems :: PU [Node] a -> PU [Element] a
 xpUnliftElems xp = ("xpUnliftElems","") <?+> PU
              { unpickleTree = doUnpickle
@@ -692,11 +714,11 @@ xpUnliftElems xp = ("xpUnliftElems","") <?+> PU
                                       NodeElement e -> e : es
                                       _ -> es) []
 
--- | Optional conversion with default value
+-- | Optional conversion with default value.
 --
 -- Unlike 'xpWithDefault' the default value is not encoded in the XML document,
 -- during unpickling the default value is inserted if the pickler doesn't
--- returna a value
+-- return a value.
 xpDefault :: (Eq a) => a -> PU [t] a -> PU [t] a
 xpDefault df
     = xpWrap (fromMaybe df)
@@ -705,7 +727,7 @@ xpDefault df
       xpOption
 
 -- | Attempt to use a pickler. Return a default value when the pickler doesn't
--- return anything (Doesn't touch on UnpickleError)
+-- return anything (doesn't touch on 'UnpickleError').
 --
 -- Unlike 'xpDefault', the default value /is/ encoded in the XML document.
 xpWithDefault :: a -> PU t a -> PU t a
@@ -716,20 +738,20 @@ xpWithDefault a pa = PU { pickleTree = pickleTree pa
                             UnpickleError e -> UnpickleError e
                         }
 
--- | 'xp2Tuple' (/compat/)
+-- | 'xp2Tuple'. (/compat/)
 xpPair :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xpPair l r = "xpPair" <??> xp2Tuple l r
 
--- | 'xp2Tuple'
+-- | 'xp2Tuple'.
 (<#>) :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 (<#>) l r = "(<#>)" <??> xp2Tuple l r
 
--- | 'xp3Tuple' (/compat/)
+-- | 'xp3Tuple'. (/compat/)
 xpTriple  :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
 xpTriple l m r = "xpTriple" <??> xp3Tuple l m r
 
 
--- | When unpickling, don't consume the matched element(s), noop when pickling
+-- | When unpickling, don't consume the matched element(s), noop when pickling.
 xpPeek :: PU t a -> PU t a
 xpPeek xp = PU { pickleTree = pickleTree xp
                , unpickleTree = \xs ->
@@ -738,9 +760,9 @@ xpPeek xp = PU { pickleTree = pickleTree xp
                     x          -> x
                }
 
--- | Noop when pickling
+-- | Noop when pickling.
 --
--- When unpickling, only give access to the first element
+-- When unpickling, only give access to the first element.
 xpIsolate :: PU [t] a -> PU [t] a
 xpIsolate xp = ("xpIsolate","") <?+>
                PU { pickleTree = pickleTree xp
@@ -756,11 +778,11 @@ xpIsolate xp = ("xpIsolate","") <?+>
 
 -- | Select a single element from the list and apply unpickler to it.
 --
--- Returns no value when no element matches the predicate
+-- Returns no value when no element matches the predicate.
 --
--- Fails when the unpickler doesn't return a value
+-- Fails when the unpickler doesn't return a value.
 --
--- When pickling, this is a noop
+-- When pickling, this is a noop.
 xpFindFirst :: (t -> Bool) -> PU [t] a -> PU [t] a
 xpFindFirst p xp = ("xpFindFirst","") <?+>
                  PU { pickleTree = pickleTree xp
@@ -771,12 +793,12 @@ xpFindFirst p xp = ("xpFindFirst","") <?+>
                             child' xp [z]
                     }
 
--- | Ignore input/output and replace with constant values
+-- | Ignore input/output and replace with constant values.
 xpConst :: a -> PU t () -> PU t a
 xpConst c xp = ("xpConst" ,"") <?> xpWrap (const c) (const ()) xp
 
--- | Convert text to/from any type that implements 'Read' and 'Show'.
--- Fails on unpickle if 'read' fails.
+-- | Convert text to/from any type that implements 'Read' and 'Show'. Fails on
+-- unpickle if 'read' fails.
 xpPrim :: (Show a, Read a) => PU Text a
 xpPrim = PU { unpickleTree = \x -> case reads $ Text.unpack x of
                  []       -> UnpickleError $ ("xpPrim","") <++>
@@ -785,8 +807,8 @@ xpPrim = PU { unpickleTree = \x -> case reads $ Text.unpack x of
             ,  pickleTree = Text.pack . show
             }
 
--- | When unpickling, tries to apply the pickler to all elements
--- returning and consuming only matched elements
+-- | When unpickling, tries to apply the pickler to all elements returning and
+-- consuming only matched elements.
 xpFindMatches :: PU [b] a -> PU [b] [a]
 xpFindMatches xp = PU { unpickleTree = doUnpickleTree
                      , pickleTree = \xs -> pickleTree xp =<< xs
@@ -800,12 +822,12 @@ xpFindMatches xp = PU { unpickleTree = doUnpickleTree
             UnpickleError e -> Right $ UnpickleError e
         in leftover (remList ls) >> sequence rs
 
--- | 'xpAll' (/compat/)
+-- | 'xpAll'. (/compat/)
 xpList0 :: PU [a] b -> PU [a] [b]
 xpList0 = xpAll
 
--- | Like xpList, but only succeed during unpickling if at least a
--- minimum number of elements are unpickled.
+-- | Like 'xpList', but only succeed during unpickling if at least a minimum
+-- number of elements are unpickled.
 xpListMinLen :: Int -> PU [a] b -> PU [a] [b]
 xpListMinLen ml = xpWrapEither testLength id . xpList
   where
@@ -814,7 +836,7 @@ xpListMinLen ml = xpWrapEither testLength id . xpList
     testLength as = Right as
 
 
--- | When unpickling, sucessively applies pickler to single elements until it
+-- | When unpickling, successively applies pickler to single elements until it
 -- doesn't return anything; returns all matched elements.
 xpSeqWhile :: PU [a] b -> PU [a] [b]
 xpSeqWhile pu = ("xpSeqWhile", "") <?+> PU {
@@ -831,7 +853,7 @@ xpSeqWhile pu = ("xpSeqWhile", "") <?+> PU {
                     NoResult _   -> Result [] (Just es)
                     UnpickleError e -> UnpickleError e
 
--- | 'xpSeqWhile' (/compat/)
+-- | 'xpSeqWhile'. (/compat/)
 xpList :: PU [a] b -> PU [a] [b]
 xpList = xpSeqWhile
 
@@ -856,10 +878,10 @@ xpMap en an xpk xpv
           xpv
 
 
--- | Like xpWrap, except it strips Right (and treats Left as a failure) during unpickling.
--- xpWrapEither :: (a -> Either String b, b -> a) -> PU t a -> PU t b
+-- | Like xpWrap, except it strips @Right@ (and treats @Left@ as a failure)
+-- during unpickling.
 --
--- not to be confuesd with 'xpEither'
+-- Not to be confused with 'xpEither'.
 xpWrapEither :: Show e => (a -> Either e b) -> (b -> a) -> PU t a -> PU t b
 xpWrapEither a2b b2a pua = ("xpWrapEither","") <?+>
      PU {
@@ -876,17 +898,18 @@ xpWrapEither a2b b2a pua = ("xpWrapEither","") <?+>
 
 -- | Execute one of a list of picklers. The /selector function/ is used during
 -- pickling, and the integer returned is taken as a 0-based index to select a
--- pickler from /pickler options/.  Unpickling is done by trying each list
--- element in order until one returns a Result.  (the /selector/ is not used).
+-- pickler from /pickler options/. Unpickling is done by trying each list
+-- element in order until one returns a @Result@ (the /selector/ is not used).
 --
--- This is typically used to handle each constructor of a data type. However, it
--- can be used wherever multiple serialization strategies apply to a single type.
+-- This is typically used to handle each constructor of a data type. However,
+-- it can be used wherever multiple serialization strategies apply to a single
+-- type.
 --
--- /NB/ This function will ignore all errors as long as one of the branches
+-- /NB/: This function will ignore all errors as long as one of the branches
 -- returns a result. Also, it will produce an error when all branches return
--- NoResult.  Use 'xpChoice' for a saner version of this function.
-xpAlt :: (a -> Int)  -- ^ selector function
-      -> [PU t a]    -- ^ list of picklers
+-- @NoResult@.  Use 'xpChoice' for a saner version of this function.
+xpAlt :: (a -> Int)  -- ^ Selector function
+      -> [PU t a]    -- ^ List of picklers
       -> PU t a
 xpAlt selector picklers = PU {
         unpickleTree = doUnpickle,
@@ -906,17 +929,18 @@ xpAlt selector picklers = PU {
 
 -- | Execute one of a list of picklers. The /selector function/ is used during
 -- pickling, and the integer returned is taken as a 0-based index to select a
--- pickler from /pickler options/.  Unpickling is done by trying each list
--- element in order until one returns a Result or an Error.
+-- pickler from /pickler options/. Unpickling is done by trying each list
+-- element in order until one returns a @Result@ or an @Error@.
 --
--- This is typically used to handle each constructor of a data type. However, it
--- can be used wherever multiple serialization strategies apply to a single type.
+-- This is typically used to handle each constructor of a data type. However,
+-- it can be used wherever multiple serialization strategies apply to a single
+-- type.
 --
 -- This function is similar to 'xpAlt' but it will stop unpickling on the first
--- error. It will return NoResult iff all of the picklers return NoResult (or
--- the list of picklers is empty).
-xpChoice :: (a -> Int)  -- ^ selector function
-      -> [PU t a]    -- ^ list of picklers
+-- error. It will return @NoResult@ iff all of the picklers return @NoResult@
+-- (or the list of picklers is empty).
+xpChoice :: (a -> Int)  -- ^ Selector function
+      -> [PU t a]    -- ^ List of picklers
       -> PU t a
 xpChoice selector picklers =
     PU { unpickleTree = go picklers (1 :: Integer)
@@ -930,11 +954,10 @@ xpChoice selector picklers =
                                            <++> e
         NoResult _ -> go ps (i+1) v
 
-
 -- | Try the left pickler first and if that doesn't produce anything the right
--- one.  wrapping the result in Left or Right, respectively
+-- one. Wrapping the result in @Left@ or @Right@, respectively.
 --
--- Not to be confued with 'xpWrapEither'
+-- Not to be confused with 'xpWrapEither'.
 xpEither :: PU n t1 -> PU n t2 -> PU n (Either t1 t2)
 xpEither xpl xpr = PU {
         unpickleTree = doUnpickle,
@@ -979,13 +1002,15 @@ xpTryCatch pu1 pu2 = PU
     , pickleTree = pickleTree pu1
     }
 
--- | The zero pickler
+-- | The zero pickler.
 --
--- Encodes nothing, always fails during unpickling. (Same as @'xpThrow' \"got xpZero\"@).
+-- Encodes nothing, always fails during unpickling. (Same as @'xpThrow'
+-- \"got xpZero\"@).
 xpZero :: PU [t] a
 xpZero = ("xpZero","") <?> xpThrow "got xpZero"
 
--- | No output when pickling, always generates an error with the specified message on unpickling.
+-- | No output when pickling, always generates an error with the specified
+-- message on unpickling.
 xpThrow :: Monoid m
         => String    -- ^ Error message
         -> PU m a
@@ -1006,7 +1031,7 @@ xpFst = xpWrap fst (\x -> (x, mempty))
 xpSnd :: Monoid a => PU t (a, b) -> PU t b
 xpSnd = xpWrap snd (\y -> (mempty, y))
 
--- | Instead of failing the pickler will return no result
+-- | Instead of failing the pickler will return no result.
 xpMayFail :: PU t a -> PU t a
 xpMayFail xp = PU { pickleTree = pickleTree xp
                   , unpickleTree = \v -> case unpickleTree xp v of
@@ -1014,9 +1039,9 @@ xpMayFail xp = PU { pickleTree = pickleTree xp
                       x -> x
                   }
 
--- | Run unpickler and consume and discard remaining elements
+-- | Run unpickler and consume and discard remaining elements.
 --
--- When pickling, this is a noop
+-- When pickling, this is a noop.
 xpClean :: PU t a -> PU t a
 xpClean xp = PU { unpickleTree = \x -> case unpickleTree xp x of
                      Result r _ -> Result r Nothing
