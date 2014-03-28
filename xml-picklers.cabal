@@ -35,6 +35,23 @@ Library
                  , Data.XML.Pickle.Tuples
   GHC-Options: -Wall
 
+Test-Suite tests
+  Main-Is: Tests.hs
+  Type: exitcode-stdio-1.0
+  Build-Depends: base >= 4 && < 5
+               , Cabal
+               , tasty
+               , tasty-hunit
+               , tasty-quickcheck
+               , QuickCheck
+               , text
+               , xml-types
+               -- , test-framework-quickcheck2
+               -- , test-framework
+               , xml-picklers
+  HS-Source-Dirs: tests
+  GHC-Options: -fhpc
+
 Source-Repository head
   type: git
   location: https://github.com/Philonous/xml-picklers

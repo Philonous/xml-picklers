@@ -10,14 +10,11 @@ module Data.XML.Pickle.Tuples
   )
   where
 
-import           Control.Applicative ((<$>))
-import           Control.Monad
-import           Data.List
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.XML.Pickle.Basic
 
--- | Try to extract the remainig elements, fail if there are none
+-- | Try to extract the remainig elements, fail if there are none.
 getRest :: UnpickleResult [a] b -> UnpickleResult [a] (b, [a])
 getRest (Result r (Just t)) = Result (r, t) Nothing
 getRest (Result r Nothing) = Result (r, []) Nothing
@@ -27,7 +24,7 @@ getRest (UnpickleError e) = UnpickleError e
 tErr :: Text -> UnpickleResult t a -> UnpickleResult t a
 tErr tr = mapUnpickleError (("tuple", tr) <++>)
 
--- | Combines 2 picklers
+-- | Combines 2 picklers.
 xp2Tuple :: PU [a] b1 -> PU [a] b2 -> PU [a] (b1, b2)
 xp2Tuple xp1 xp2 = "xp2Tuple" <??>
                    PU {pickleTree = \(t1, t2) ->
@@ -35,12 +32,12 @@ xp2Tuple xp1 xp2 = "xp2Tuple" <??>
                     , unpickleTree = doUnpickleTree
                     } where
   doUnpickleTree r0 = do
-    -- The /Either String/ monad
+    -- The @Either String@ monad.
     (x1 ,r1) <- tErr "1" . getRest $ unpickleTree xp1 r0
     x2 <- tErr "2" $ unpickleTree xp2 r1
     return (x1,x2)
 
--- | Combines 3 picklers
+-- | Combines 3 picklers.
 xp3Tuple :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] (a1, a2, a3)
 xp3Tuple xp1 xp2 xp3 = "xp3Tuple" <??> PU {pickleTree = \(t1, t2, t3) ->
                         pickleTree xp1 t1
@@ -54,7 +51,7 @@ xp3Tuple xp1 xp2 xp3 = "xp3Tuple" <??> PU {pickleTree = \(t1, t2, t3) ->
     x3 <- tErr "3" $ unpickleTree xp3 r2
     return (x1,x2,x3)
 
--- | Combines 4 picklers
+-- | Combines 4 picklers.
 xp4Tuple :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4
              -> PU [a] (a1, a2, a3,a4)
 xp4Tuple xp1 xp2 xp3 xp4
@@ -73,7 +70,7 @@ xp4Tuple xp1 xp2 xp3 xp4
     x4 <- tErr "4" $ unpickleTree xp4 r3
     return (x1,x2,x3,x4)
 
--- | Combines 5 picklers
+-- | Combines 5 picklers.
 xp5Tuple :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] (a1, a2, a3, a4, a5)
 xp5Tuple xp1 xp2 xp3 xp4 xp5
@@ -94,7 +91,7 @@ xp5Tuple xp1 xp2 xp3 xp4 xp5
     x5 <- tErr "5" $ unpickleTree xp5 r4
     return (x1,x2,x3,x4,x5)
 
--- | You guessed it ... Combines 6 picklers
+-- | You guessed it ... Combines 6 picklers.
 xp6Tuple :: PU [a] a1 -> PU [a] a2 -> PU [a] a3 -> PU [a] a4 -> PU [a] a5
              -> PU [a] a6
              -> PU [a] (a1, a2, a3, a4, a5, a6)
