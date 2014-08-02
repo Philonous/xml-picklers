@@ -72,11 +72,22 @@ showTr (name, extra) = concat [Text.unpack name , " (", Text.unpack extra, ")"]
 
 printUPE :: UnpickleError -> [String]
 printUPE (ErrorMessage m) = [Text.unpack m]
-printUPE (TraceStep t es) = ("-> " ++ showTr  t) : printUPE es
 printUPE (Variants vs) = concat
                        . zipWith (:) (map (\x -> show x ++ ")") [(1 :: Int)..])
                        . map (map ( "  " ++))
                        $ (printUPE <$> vs)
+printUPE (TraceStep t es) =
+    let (n, es') = collapsSteps t es
+    in  ("-> " ++ showTr  t
+         ++ if n > 0
+            then (" [x" ++ show (n+1) ++"]" )
+            else "")
+        : printUPE es'
+  where
+    collapsSteps t (TraceStep t' ns) | t == t'
+        = let (n, ns') = collapsSteps t ns
+          in (n+1, ns')
+    collapsSteps _ es = (0, es)
 
 ppUnpickleError :: UnpickleError -> String
 ppUnpickleError e = "Error while unpickling:\n"
