@@ -4,7 +4,7 @@
 
 module Data.XML.Pickle.Basic where
 
-import           Control.Applicative ((<$>))
+import           Control.Monad (ap)
 import qualified Control.Category as Cat
 import           Control.Exception (Exception)
 import           Data.Maybe
@@ -30,6 +30,10 @@ data UnpickleResult t a = UnpickleError UnpickleError
                                              -- should always be @Nothing@
                                              -- instead of @Just mempty@
                           deriving (Functor, Show)
+
+instance Applicative (UnpickleResult t) where
+  pure = return
+  (<*>) = ap
 
 instance Monad (UnpickleResult t) where
     return x = Result x Nothing
