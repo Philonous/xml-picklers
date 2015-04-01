@@ -222,7 +222,6 @@ module Data.XML.Pickle (
   , getRest
 )   where
 
-import Control.Applicative ((<$>))
 import Control.Arrow
 import Control.Exception
 import Control.Monad
@@ -231,7 +230,6 @@ import Data.Either
 import Data.List (partition)
 import qualified Data.Map as M
 import Data.Maybe
-import Data.Monoid (Monoid, mempty)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.XML.Types
