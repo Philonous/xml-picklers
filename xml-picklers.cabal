@@ -38,17 +38,15 @@ Library
 Test-Suite tests
   Main-Is: Tests.hs
   Type: exitcode-stdio-1.0
-  Build-Depends: base >= 4 && < 5
-               , Cabal
+  Build-Depends: Cabal
+               , QuickCheck
+               , base >= 4 && < 5
                , tasty
                , tasty-hunit
                , tasty-quickcheck
-               , QuickCheck
                , text
-               , xml-types
-               -- , test-framework-quickcheck2
-               -- , test-framework
                , xml-picklers
+               , xml-types
   HS-Source-Dirs: tests
   GHC-Options: -fhpc
 

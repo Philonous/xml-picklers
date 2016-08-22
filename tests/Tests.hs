@@ -3,17 +3,18 @@
 
 -- module Tests where
 
-import Control.Monad
-import Data.Either
-import Data.List
-import Data.Maybe
-import Data.Text (Text)
-import Data.XML.Pickle
-import Data.XML.Types
-import Test.Tasty
-import Test.Tasty.HUnit
-import Test.Tasty.QuickCheck
-import Test.QuickCheck
+import           Control.Monad
+import           Data.Either
+import           Data.Function (on)
+import           Data.List
+import           Data.Maybe
+import           Data.Text (Text)
+import           Data.XML.Pickle
+import           Data.XML.Types
+import           Test.QuickCheck
+import           Test.Tasty
+import           Test.Tasty.HUnit
+import           Test.Tasty.QuickCheck
 
 import qualified Data.Text as Text
 
@@ -48,7 +49,7 @@ main =
     , testCase "xpBoolUnpickle1" $ assertBool "" xpBoolUnpickle1
     , testCase "xpBoolUnpickle0" $ assertBool "" xpBoolUnpickle0
     , testCase "xpBoolPickleTrue" $ assertBool "" xpBoolPickleTrue
-    , testCase "xpBoolPickleFalse" $ assertBool "" xpBoolPickleFalse 
+    , testCase "xpBoolPickleFalse" $ assertBool "" xpBoolPickleFalse
     ]
 
 -- Generates an arbitrary XML name. Namespaces (not part of XML 1.0) are not
@@ -141,8 +142,9 @@ prop_xpUnit as = (case unpickle xpUnit as of
 
 -- Given a list of attributes, every attribute should be present upon unpickle.
 prop_xpAttribute :: [Attribute] -> Bool
-prop_xpAttribute attributes =
-  let result = map (\(n, c) -> let t = contentToText c
+prop_xpAttribute attributes' =
+  let attributes = nubBy ((==) `on` fst ) attributes'
+      result = map (\(n, c) -> let t = contentToText c
                                in unpickle (xpAttribute_ n t) attributes)
                attributes
   in length result == length (rights (result))
