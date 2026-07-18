@@ -34,11 +34,10 @@ data UnpickleResult t a = UnpickleError UnpickleError
 
 
 instance Applicative (UnpickleResult t) where
-    pure = return
+    pure x = Result x Nothing
     (<*>) = ap
 
 instance Monad (UnpickleResult t) where
-    return x = Result x Nothing
     Result x r >>= f = case f x of
         Result y r' -> Result y (if isJust r then r else r')
         y -> y
