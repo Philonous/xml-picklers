@@ -1,124 +1,180 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
-module Data.XML.Pickle.Generic
-       ( xpGeneric
-       )
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 
-       where
+-- | XML pickler helpers.
+--
+-- Instead of writing picklers to tuples and then manually transforming those
+-- into data types, we pickle to a heterogeneous list ('HList') and let
+-- "GHC.Generics" convert it to and from the record for us.
+--
+-- == Worked example
+--
+-- Say we want to read this document:
+--
+-- > <contact id="ignored">
+-- >   <name>Ada</name>
+-- >   <email>ada@example.com</email>
+-- >   <phone>555-0100</phone>
+-- > </contact>
+--
+-- Declare a single-constructor record and derive 'Generic':
+--
+-- > data Contact = Contact
+-- >   { contactName  :: Text
+-- >   , contactEmail :: Maybe Text
+-- >   , contactPhone :: Text
+-- >   } deriving (Show, Generic)
+--
+-- Then give one child pickler per field, in declaration order, joined with
+-- @(:::)@ and terminated by 'HNil':
+--
+-- > xpContact :: PU [Node] Contact
+-- > xpContact =
+-- >   xpRecord "contact" $
+-- >         xpElemText "name"
+-- >     ::: xpOption (xpElemText "email")
+-- >     ::: xpElemText "phone"
+-- >     ::: HNil
+--
+-- === Rules of thumb
+--
+-- * Exactly one pickler per field, in the same order as the record fields;
+--   a mismatch shows up as an equality error on @PickleFields as ~ GHList (Rep b)@.
+-- * The type must have a single constructor with at least one field.
+-- * Attributes on the wrapping element are ignored.
 
-import Control.Applicative ((<$>))
-import Data.Data
+module Data.XML.Pickle.Generic where
+
+import Control.Monad (MonadPlus (..))
+import Data.Kind
 import Data.XML.Pickle
 import Data.XML.Types
-import qualified Data.Text as Text
-import Control.Monad.State
-import Control.Monad.Trans
+import GHC.Generics
 
-constrs x = map constrFields. dataTypeConstrs $ dataTypeOf x
+-- Instead of writing picklers to tuples and then manually transforming those to
+-- data types, we use heterogenous list plus machinery to
+-- automatically convert to that.
+infixr 8 :::
 
-text :: Show a => a -> Text.Text
-text = Text.pack . show
+-- Helper HList
+data HList (as :: [Type]) where
+  HNil :: HList '[]
+  (:::) :: a -> HList as -> HList (a ': as)
 
-toElement :: Data a => Maybe Text.Text -> a -> Element
-toElement ns x = case toNode ns x of
-    NodeElement e -> e
-    c@(NodeContent _) -> Element "val" [] [c]
+instance Show (HList '[]) where
+  show _ = "|"
 
-toNode :: Data a => Maybe Text.Text -> a -> Node
-toNode ns x = case constrRep c of
-                AlgConstr _ -> NodeElement $ Element
-                                 (Name (text c)
-                                       ns
-                                       Nothing)
-                                 []
-                                 (NodeElement <$> mapElems)
-                _ -> NodeContent $ ContentText (text c)
-  where
-    c  = toConstr x
-    fs = Text.pack <$> constrFields c
-    mapElems = if null fs then gmapQ (toElement ns)  x
-                          else zipWith mapElem fs $ gmapQ (toNode ns) x
-    mapElem n c = (Element (Name n ns Nothing) [] [c] )
+instance (Show a, Show (HList as)) => Show (HList (a ': as)) where
+  show (a ::: as) = "| " ++ show a ++ " " ++ show as
 
-upe :: String -> Either UnpickleError a
-upe e = Left $ ErrorMessage (Text.pack e)
+-- Isomorphism between data types and hlist
+class GRecordHList f where
+  type GHList f :: [Type]
+  gToHList :: f p -> HList (GHList f)
+  gFromHList :: HList (GHList f) -> f p
 
-fromNode :: Data a => Maybe Text.Text -> Node -> Either UnpickleError a
-fromNode ns n = fromNode'
-  where
-    dt = let ~(Right x) = fromNode' in dataTypeOf x
-    fromNode' = case dataTypeRep dt of
-                        AlgRep as ->
-                            case n of
-                                NodeElement e -> fromElement ns e
-                                _ -> upe $ "Algebraic type with NodeContent"
-                        _ -> case n of
-                                    NodeContent (ContentText t) ->
-                                        case readConstr dt $ Text.unpack t of
-                                            Nothing -> upe "Couldn't read constr"
-                                            Just c -> Right $ fromConstr c
-                                    n -> upe $ "Non-algebraic type" ++ show dt
-                                               ++ " with Element " ++ show n
+-- Strip metadata
+instance (GRecordHList f) => GRecordHList (M1 i m f) where
+  type GHList (M1 i m f) = GHList f
+  gToHList = gToHList . unM1
+  gFromHList = M1 . gFromHList
 
+instance (GRecordHList b) => GRecordHList (S1 metas (Rec0 a) :*: b) where
+  type GHList (S1 metas (Rec0 a) :*: b) = a ': GHList b
+  gToHList (M1 (K1 a) :*: b) = a ::: gToHList b
+  gFromHList (a ::: xs) =
+    M1 (K1 a) :*: gFromHList xs
 
+-- Field: singleton
+instance GRecordHList (K1 i a) where
+  type GHList (K1 i a) = '[a]
+  gToHList (K1 x) = x ::: HNil
+  gFromHList (x ::: HNil) = K1 x
 
-fromElement :: Data a => Maybe Text.Text -> Element -> Either UnpickleError a
-fromElement ns e = fE
-  where
-    dt = let ~(Right x) = fE in dataTypeOf x
-    fE = case dataTypeRep dt of
-        AlgRep _ -> fromElement' ns e
-        _ -> case e of
-            Element (Name "val" ns _) [] cs -> case flattenContent cs of
-                [c] -> fromNode ns c
-                _  -> upe "Too many nodes"
-            e  -> upe $ "Missing wrapper element " ++ show dt ++ " / " ++ show e
+-- structural picklers:
+class XpHList (as :: [Type]) where
+  type PickleFields as :: [Type]
+  xpHList :: HList as -> PU [Node] (HList (PickleFields as))
 
+instance XpHList '[] where
+  type PickleFields '[] = '[]
+  xpHList HNil =
+    PU
+      { pickleTree = \HNil -> [],
+        unpickleTree = \_ -> return HNil
+      }
 
-fromElement' :: Data a => Maybe Text.Text -> Element -> Either UnpickleError a
-fromElement' ns (Element (Name lp ns' pf) [] cs)
-    | ns == ns' = fromElement''
-    | otherwise = upe $ "namespace doesn't match: "
-                       ++ show ns ++ " /= " ++ show ns'
-  where
-    dt = let ~(Right x) = fromElement'' in dataTypeOf x
-    fromElement'' = constr >>= \c -> case constrFields c of
-        [] -> fst <$> runStateT (fromConstrM nextN c) cs
-        fs -> fst <$> runStateT (fromConstrM nextF c) (cs, Text.pack <$> fs)
-    constr = case readConstr dt $ Text.unpack lp of
-        Nothing -> upe $ "Could not read constr " ++ show lp ++ " / " ++ show dt
-        Just r -> Right r
-    nextN :: Data a => StateT [Node] (Either UnpickleError) a
-    nextN = do
-        xs' <- get
-        case xs' of
-            [] -> lift . upe $ "Not enough elements (N)" ++ show dt
-            (x:xs) -> do
-                put xs
-                case x of
-                    NodeElement e -> lift $ fromElement ns e
-                    c -> lift . upe $ "unexpected NodeContent " ++ show c ++ " / " ++ show dt
+instance (XpHList as) => XpHList (PU [Node] a ': as) where
+  type PickleFields (PU [Node] a ': as) = a ': PickleFields as
+  xpHList (pu ::: pus) =
+    PU
+      { pickleTree = \(x ::: xs) ->
+          pickleTree pu x ++ pickleTree (xpHList pus) xs,
+        unpickleTree = \r0 -> do
+          (x, r1) <- getRest $ unpickleTree pu r0
+          xs <- unpickleTree (xpHList pus) r1
+          return (x ::: xs)
+      }
 
-    nextF :: Data a => StateT ([Node], [Text.Text]) (Either UnpickleError) a
-    nextF = do
-        rs <- get
-        x <- case rs of
-            (x:xs, f:fs) -> do
-                put (xs, fs)
-                case x of
-                    NodeElement (Element name@(Name lp ns'' _) _ [c])
-                        | (lp == f) && (ns'' == ns) -> return c
-                        | otherwise -> lift . upe $ "name doesn't match " ++ show name
-                    n -> lift . upe $ "Wrong node type" ++ show n ++ " / "
-                                        ++ show dt
-            _ -> lift $ upe "not enough elements (F)"
-        lift $ fromNode ns x
-fromElement' _ _ = upe "Element had attributes"
+xpRecord ::
+  ( XpHList as,
+    PickleFields as ~ GHList (Rep b),
+    Generic b,
+    GRecordHList (Rep b)
+  ) =>
+  Name ->
+  HList as ->
+  PU [Node] b
+xpRecord name pus =
+  xpWrap (to . gFromHList . snd) (((),) . gToHList . from) $
+    xpElem name (xpClean xpUnit) (xpClean $ xpHList pus)
 
--- | Generate a pickler for any Data.Data.Data instance.
-xpGeneric :: Data a => Maybe Text.Text -> PU Element a
-xpGeneric ns = ("xpGeneric","") <?+>
-               PU { pickleTree = toElement ns
-                  , unpickleTree = \e -> case fromElement ns e of
-                      Left e -> Left e
-                      Right a -> Right (a, (Nothing, True))
-               }
+-- Empty data type
+--
+-- Fill every field with "mzero" (works with Maybe and lists at least)
+
+class GEmpty f where
+  gEmpty :: f a
+
+instance (MonadPlus m) => GEmpty (K1 i (m a)) where
+  gEmpty = K1 mzero
+
+instance (GEmpty f, GEmpty g) => GEmpty (f :*: g) where
+  gEmpty = gEmpty :*: gEmpty
+
+instance (GEmpty f) => GEmpty (M1 i m f) where
+  gEmpty = M1 gEmpty
+
+empty :: (Generic a, GEmpty (Rep a)) => a
+empty = to gEmpty
+
+xpOptionOrEmpty :: (Generic a, GEmpty (Rep a)) => PU [t] a -> PU [t] a
+xpOptionOrEmpty =
+  xpWrap
+    ( \case
+        Nothing -> empty
+        Just x -> x
+    )
+    Just
+    . xpOption
+
+xpElemNodesOrDefault :: Name -> a -> PU [Node] a -> PU [Node] a
+xpElemNodesOrDefault name def =
+  xpWrap
+    ( \case
+        Nothing -> def
+        Just r -> r
+    )
+    Just
+    . xpOption
+    . xpWrap snd (\a -> ((), a))
+    . xpElem name (xpClean xpUnit)
+    . xpClean
